@@ -1,0 +1,14 @@
+# Secrets -- config.ini holds DB/SMTP credentials; only the example ships
+config.ini
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Offline package bundle and Inno Setup build output
+wheels/
+Output/
+
+# Local Claude Code settings
+.claude/
