@@ -1,4 +1,4 @@
-# 3M Issue Tracker - automated installer
+# 3M Issues & Projects Tracker - automated installer
 # Run from an elevated PowerShell in the app folder:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
 #
@@ -9,6 +9,7 @@
 #Requires -RunAsAdministrator
 param(
     [string]$Port = "8501",
+    [switch]$Tls,          # serve HTTPS using certs\cert.pem + key.pem (generated if missing)
     [switch]$SkipSchema,
     [switch]$SkipTasks
 )
@@ -16,7 +17,7 @@ $ErrorActionPreference = "Stop"
 $AppDir = $PSScriptRoot
 Set-Location $AppDir
 
-Write-Host "=== 3M Issue Tracker installer ===" -ForegroundColor Cyan
+Write-Host "=== 3M Issues & Projects Tracker installer ===" -ForegroundColor Cyan
 Write-Host "Installing from: $AppDir"
 
 # --- 1. Python ---------------------------------------------------------------
@@ -69,8 +70,8 @@ if (-not (Test-Path "$AppDir\config.ini")) {
 }
 
 # --- 6. Firewall -------------------------------------------------------------
-if (-not (Get-NetFirewallRule -DisplayName "3M Issue Tracker" -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName "3M Issue Tracker" -Direction Inbound -Action Allow `
+if (-not (Get-NetFirewallRule -DisplayName "3M Issues & Projects Tracker" -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName "3M Issues & Projects Tracker" -Direction Inbound -Action Allow `
         -Protocol TCP -LocalPort $Port | Out-Null
     Write-Host "Firewall rule added for TCP $Port."
 }
@@ -80,13 +81,29 @@ if (-not $SkipTasks) {
     $python    = "$AppDir\venv\Scripts\python.exe"
     $streamlit = "$AppDir\venv\Scripts\streamlit.exe"
 
+    # TLS (opt-in with -Tls): self-signed unless you've placed a CA-issued pair at
+    # certs\cert.pem + key.pem. Clients trust certs\3m-tracker.cer once (self-signed only).
+    $tlsArgs = ""
+    if ($Tls) {
+        if (-not (Test-Path "$AppDir\certs\cert.pem")) {
+            Write-Host "Generating self-signed TLS certificate..."
+            & $python "$AppDir\gen_cert.py"
+        }
+        $tlsArgs = " --server.sslCertFile `"$AppDir\certs\cert.pem`" --server.sslKeyFile `"$AppDir\certs\key.pem`""
+    }
+
     Write-Host "Registering scheduled tasks..."
-    schtasks /Create /F /TN "IssueTracker App" /SC ONSTART /RU SYSTEM `
-        /TR "`"$streamlit`" run `"$AppDir\app.py`" --server.address 0.0.0.0 --server.port $Port" | Out-Null
+    $appArgs = "run `"$AppDir\app.py`" --server.address 0.0.0.0 --server.port $Port --server.headless true$tlsArgs"
+    Register-ScheduledTask -TaskName "IssueTracker App" -Force `
+        -Action    (New-ScheduledTaskAction -Execute $streamlit -Argument $appArgs) `
+        -Trigger   (New-ScheduledTaskTrigger -AtStartup) `
+        -Principal (New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount) | Out-Null
     schtasks /Create /F /TN "IssueTracker Reminders" /SC WEEKLY /D THU /ST 09:00 /RU SYSTEM `
         /TR "`"$python`" `"$AppDir\send_reminders.py`"" | Out-Null
     schtasks /Create /F /TN "IssueTracker Weekly Digest" /SC WEEKLY /D FRI /ST 07:00 /RU SYSTEM `
         /TR "`"$python`" `"$AppDir\send_digest.py`"" | Out-Null
+    schtasks /Create /F /TN "IssueTracker DB Backup" /SC DAILY /ST 02:00 /RU SYSTEM `
+        /TR "powershell -NoProfile -ExecutionPolicy Bypass -File `"$AppDir\backup_db.ps1`"" | Out-Null
 
     Write-Host "Starting the app..."
     schtasks /Run /TN "IssueTracker App" | Out-Null
@@ -94,14 +111,24 @@ if (-not $SkipTasks) {
 
 # --- 8. Admin account --------------------------------------------------------
 Write-Host ""
-$hasAdmin = & "$AppDir\venv\Scripts\python.exe" -c "import db; print(any(u['IsAdmin'] for u in db.list_users()))" 2>$null
-if ($hasAdmin.Trim() -ne "True") {
+$venvPython = "$AppDir\venv\Scripts\python.exe"
+$adminCheck = (& $venvPython -c "import db; print(any(u['IsAdmin'] for u in db.list_users()))" 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Couldn't check for an admin account - the database connection failed:"
+    Write-Host $adminCheck
+    Write-Warning "Fix the [database] section in config.ini (server/driver), then run: .\venv\Scripts\python.exe create_admin.py"
+} elseif ($adminCheck -ne "True") {
     Write-Host "Create your admin account:" -ForegroundColor Yellow
-    & "$AppDir\venv\Scripts\python.exe" "$AppDir\create_admin.py"
+    & $venvPython "$AppDir\create_admin.py"
 }
 
 Write-Host ""
 Write-Host "=== Install complete ===" -ForegroundColor Green
-Write-Host "App:            http://localhost:$Port  (team: http://$env:COMPUTERNAME`:$Port)"
+$scheme = if ($Tls) { "https" } else { "http" }
+Write-Host "App:            ${scheme}://localhost:$Port  (team: ${scheme}://$env:COMPUTERNAME`:$Port)"
+if ($Tls) {
+    Write-Host "Clients:        if using the self-signed cert, import certs\3m-tracker.cer into"
+    Write-Host "                Trusted Root once per machine:  certutil -addstore -f Root 3m-tracker.cer"
+}
 Write-Host "Test the relay: .\venv\Scripts\python test_smtp.py you@yourdomain.com"
 Write-Host "Emails:         reminders Thu 9:00 AM, digest Fri 7:00 AM (Task Scheduler)"

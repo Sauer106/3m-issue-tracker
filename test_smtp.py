@@ -17,7 +17,7 @@ def main():
     print(f"Sending test message to {recipient} via {config['smtp']['host']}:{config['smtp'].get('port', '25')}...")
     send_email(
         config, [recipient],
-        "[3M Issue Tracker] SMTP relay test",
+        "[3M Issues & Projects Tracker] SMTP relay test",
         "<p>If you can read this, the issue tracker can send mail through your relay.</p>",
     )
     print("Sent. Check the inbox (and spam folder).")

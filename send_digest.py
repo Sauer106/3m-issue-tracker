@@ -45,12 +45,12 @@ def issue_table(issues, updates, cutoff):
             missed = ' style="background:#fff3cd"'
         assignee = i["AssignedToName"] or "<i>Unassigned</i>"
         rows += (
-            f"<tr{missed}><td>#{i['Id']}</td><td>{i['Title']}</td><td>{i['Priority']}</td>"
+            f"<tr{missed}><td>#{i['Id']}</td><td>{i['Title']}</td>"
             f"<td>{i['Status']}</td><td>{assignee}</td><td>{last}</td></tr>"
         )
     return (
         '<table border="1" cellpadding="6" cellspacing="0">'
-        "<tr><th>ID</th><th>Title</th><th>Priority</th><th>Status</th>"
+        "<tr><th>ID</th><th>Title</th><th>Status</th>"
         "<th>Assigned To</th><th>Latest Update</th></tr>" + rows + "</table>"
     )
 
@@ -65,10 +65,10 @@ def main():
         print("Digest already sent for this reporting week. Exiting.")
         return
 
-    open_issues = db.list_issues(statuses=["Open", "In Progress"])
+    open_issues = db.list_issues(statuses=["Open", "In Progress", "Waiting on Solventum", "Hold"])
     new_issues = [i for i in open_issues if i["CreatedAt"] >= week_start]
     resolved = [
-        i for i in db.list_issues(statuses=["Resolved", "Closed"])
+        i for i in db.list_issues(statuses=["Closed"])
         if i["ResolvedAt"] and i["ResolvedAt"] >= week_start
     ]
     updates = latest_update_map([i["Id"] for i in open_issues + resolved])
@@ -78,16 +78,16 @@ def main():
     ]
 
     html = f"""
-    <h2>3M Issue Tracker — Weekly Digest</h2>
+    <h2>3M Issues & Projects Tracker — Weekly Digest</h2>
     <p>Reporting week: {week_start:%B %d} – {cutoff:%B %d, %Y} (2:00 PM EST cutoff)</p>
     <p><b>{len(open_issues)}</b> open &nbsp;|&nbsp; <b>{len(new_issues)}</b> new this week
-    &nbsp;|&nbsp; <b>{len(resolved)}</b> resolved this week
+    &nbsp;|&nbsp; <b>{len(resolved)}</b> closed this week
     &nbsp;|&nbsp; <b>{len(missed)}</b> missing updates (highlighted below)</p>
     <h3>Open Issues</h3>
     {issue_table(open_issues, updates, cutoff)}
-    <h3>Resolved / Closed This Week</h3>
+    <h3>Closed This Week</h3>
     {issue_table(resolved, updates, cutoff)}
-    <p><a href="{app_url}">Open the 3M Issue Tracker</a></p>
+    <p><a href="{app_url}">Open the 3M Issues & Projects Tracker</a></p>
     """
 
     recipients = sorted({u["Email"] for u in db.list_users(active_only=True) if u["Email"]})
@@ -97,7 +97,7 @@ def main():
         print("No recipients configured. Exiting.", file=sys.stderr)
         sys.exit(1)
 
-    subject = f"[3M Issue Tracker] Weekly Digest — {cutoff:%B %d, %Y}"
+    subject = f"[3M Issues & Projects Tracker] Weekly Digest — {cutoff:%B %d, %Y}"
     send_email(config, recipients, subject, html)
     db.log_email("digest", "__digest__")
     for addr in recipients:

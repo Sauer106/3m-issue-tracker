@@ -20,14 +20,14 @@ def find_delinquent_issues(week_start):
                   SELECT 1 FROM IssueUpdates u
                   WHERE u.IssueId = i.Id AND u.CreatedAt >= ?
               )
-              ORDER BY i.Priority, i.Id""",
+              ORDER BY i.Id""",
         (week_start,),
     )
 
 
 def build_body(user_name, issues, deadline, app_url):
     rows = "".join(
-        f"<tr><td>#{i['Id']}</td><td>{i['Title']}</td><td>{i['Priority']}</td>"
+        f"<tr><td>#{i['Id']}</td><td>{i['Title']}</td>"
         f"<td>{i['Status']}</td><td>{i['CreatedAt']:%Y-%m-%d}</td></tr>"
         for i in issues
     )
@@ -37,10 +37,10 @@ def build_body(user_name, issues, deadline, app_url):
     have <b>no update this week</b>. Updates are due by
     <b>{deadline:%A, %B %d} at 2:00 PM EST</b> so they make Friday's digest.</p>
     <table border="1" cellpadding="6" cellspacing="0">
-      <tr><th>ID</th><th>Title</th><th>Priority</th><th>Status</th><th>Opened</th></tr>
+      <tr><th>ID</th><th>Title</th><th>Status</th><th>Opened</th></tr>
       {rows}
     </table>
-    <p><a href="{app_url}">Open the 3M Issue Tracker</a> to add your updates.</p>
+    <p><a href="{app_url}">Open the 3M Issues & Projects Tracker</a> to add your updates.</p>
     """
 
 
@@ -75,7 +75,7 @@ def main():
         ]
         if not to_send:
             continue
-        subject = f"[3M Issue Tracker] Update needed on {len(to_send)} issue(s) by Thursday 2:00 PM"
+        subject = f"[3M Issues & Projects Tracker] Update needed on {len(to_send)} issue(s) by Thursday 2:00 PM"
         try:
             send_email(config, [owner["Email"]], subject,
                        build_body(owner["DisplayName"], to_send, deadline, app_url))

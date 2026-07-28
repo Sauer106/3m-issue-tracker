@@ -1,6 +1,12 @@
 # Secrets -- config.ini holds DB/SMTP credentials; only the example ships
 config.ini
 
+# TLS private key and certs are per-server; regenerate with gen_cert.py
+certs/
+
+# Signing key for session cookies -- generated per-server on first run
+session_secret.key
+
 # Python
 venv/
 __pycache__/

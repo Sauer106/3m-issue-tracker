@@ -1,4 +1,4 @@
-; Inno Setup script - builds a double-clickable setup.exe for the 3M Issue Tracker.
+; Inno Setup script - builds a double-clickable setup.exe for the 3M Issues & Projects Tracker.
 ;
 ; To build (on any Windows machine):
 ;   1. Install Inno Setup 6 (free): https://jrsoftware.org/isinfo.php
@@ -16,7 +16,7 @@
 ; install.ps1 will then install packages without touching the internet.
 
 [Setup]
-AppName=3M Issue Tracker
+AppName=3M Issues & Projects Tracker
 AppVersion=1.0
 AppPublisher=Your Team
 DefaultDirName=C:\IssueTracker

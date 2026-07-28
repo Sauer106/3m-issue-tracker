@@ -9,7 +9,7 @@ import db
 
 
 def main():
-    print("=== 3M Issue Tracker — create admin account ===")
+    print("=== 3M Issues & Projects Tracker — create admin account ===")
     username = input("Username: ").strip()
     if db.get_user_by_username(username):
         print(f"User '{username}' already exists. Aborting.")

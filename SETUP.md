@@ -1,148 +1,129 @@
-# 3M Issue Tracker — Server Setup Guide
+# 3M Issues & Projects Tracker — Server Setup Guide
 
-Everything runs on your existing Windows automation server (the one already running
-SQL Server and your PowerShell capture script).
+Everything runs on one Windows server with SQL Server (Express is fine). Current
+production install: `KOP-3MERDP01`, app at **https://kop-3merdp01:8501**
+(pending DNS: `https://3mtracking.uhsinc.com:8501`).
 
 ## Quick install (recommended)
 
-Steps 2–7 below are automated by `install.ps1`. After installing Python 3.11+ and
-the ODBC driver (step 1), copy this folder to the server and run from an
-**elevated** PowerShell:
+After installing the prerequisites (step 1), copy this folder to the server and run
+from an **elevated** PowerShell:
 
 ```powershell
-cd C:\IssueTracker
-powershell -ExecutionPolicy Bypass -File install.ps1
+cd C:\path\to\3m-issue-tracker
+powershell -ExecutionPolicy Bypass -File install.ps1 -Tls
 ```
 
-It creates the venv, installs packages, runs `schema.sql`, opens `config.ini` for
-you to edit, adds the firewall rule, registers the app + both email scripts in Task
-Scheduler, starts the app, and prompts for your admin account. Prefer a
-double-clickable `setup.exe`? Compile `installer.iss` with Inno Setup on any
-Windows machine — see the comments at the top of that file.
+`install.ps1` creates the venv, installs packages, runs `schema.sql` (idempotent —
+safe to re-run for upgrades), opens `config.ini` for editing on first install, adds
+the firewall rule, registers the scheduled tasks (app, reminder emails, digest,
+nightly DB backup), starts the app, and prompts for the first admin account.
 
-The manual steps below do the same thing, and are useful for troubleshooting.
+Flags: `-Tls` serves HTTPS (see TLS below — omit for plain HTTP), `-Port` (default
+8501), `-SkipSchema`, `-SkipTasks`.
 
 ## What's in this folder
 
 | File | Purpose |
 |---|---|
-| `schema.sql` | Creates the `IssueTracker` database and tables |
-| `app.py` | The Streamlit web app |
+| `schema.sql` | Creates/upgrades the `IssueTracker` database (idempotent) |
+| `app.py` | The Streamlit web app (login, 2FA, issues, projects, admin) |
 | `db.py`, `auth.py`, `mailer.py`, `reporting.py` | Shared modules |
 | `send_reminders.py` | Thursday-morning reminder emails (Task Scheduler) |
 | `send_digest.py` | Friday-morning weekly digest (Task Scheduler) |
-| `create_admin.py` | One-time: create your admin account |
-| `test_smtp.py` | One-time: verify the SMTP relay works |
-| `config.example.ini` | Template — copy to `config.ini` and edit |
+| `backup_db.ps1` | Nightly database backup (Task Scheduler, 2:00 AM) |
+| `gen_cert.py` | Generates a self-signed TLS cert into `certs\` (placeholder until a CA cert) |
+| `create_admin.py` | One-time: create the first admin account |
+| `test_smtp.py` | Verify the SMTP relay works |
+| `config.example.ini` | Template — copied to `config.ini` on first install |
 
-## 1. Install prerequisites (on the server)
+Not in git (per-server, see `.gitignore`): `config.ini` (credentials),
+`certs\` (TLS key/cert), `session_secret.key` (session-cookie signing key —
+delete it to force-log-out everyone), `venv\`.
 
-1. **Python 3.11+** from python.org — check **"Add python.exe to PATH"** during install.
-2. **Microsoft ODBC Driver 18 for SQL Server** — download from Microsoft if not already
-   installed (SSMS installs often include it; check *Apps & Features*).
+## 1. Prerequisites
 
-## 2. Copy the project and install packages
+1. **Python 3.11+** from python.org — check **"Add python.exe to PATH"**.
+2. **Microsoft ODBC Driver 17 or 18 for SQL Server** — the installer detects which
+   is present and warns if `config.ini` needs its `driver` line adjusted.
+3. **SQL Server** (Express OK) on the same box, Windows auth.
 
-Copy this folder to the server, e.g. `C:\IssueTracker`, then in PowerShell:
+## 2. Configuration (`config.ini`)
 
-```powershell
-cd C:\IssueTracker
-python -m venv venv
-.\venv\Scripts\pip install -r requirements.txt
-```
+- `[database]` — localhost + Windows auth by default. The app and scheduled tasks
+  run as SYSTEM; `schema.sql` grants `NT AUTHORITY\SYSTEM` read/write/backup on the
+  database automatically.
+- `[smtp]` — internal relay host, port 25, no auth. **The relay must allowlist this
+  server's IP** or connections will open and then hang with no banner — that's a
+  relay-side allowlist ticket, not an app problem. Test with
+  `.\venv\Scripts\python test_smtp.py you@yourdomain.com`.
+- `[app]` — `app_url` is what email links point at; keep it matching the real URL
+  (scheme included). `timezone` is the server's zone (timestamps are stored in it;
+  the UI converts to each viewer's browser zone automatically).
 
-## 3. Create the database
+## 3. TLS
 
-Open `schema.sql` in SSMS and execute it (or `sqlcmd -S localhost -i schema.sql`).
-It creates the `IssueTracker` database with `Users`, `Issues`, `IssueUpdates`, and
-`EmailLog` tables. It will not touch your existing databases.
+The app serves HTTPS from `certs\cert.pem` + `certs\key.pem` when the scheduled
+task includes the TLS flags (`install.ps1 -Tls`).
 
-## 4. Configure
+- **CA-issued cert (production):** generate a CSR with `certreq` (key stays on the
+  server, mark it `Exportable = TRUE`), have your PKI team issue it, then
+  `certreq -accept -machine` the response, export a PFX, and convert to
+  `cert.pem`/`key.pem` (chain included in cert.pem). The current cert (UHS Issuing
+  CA 03) covers `KOP-3MERDP01.corp.uhsinc.biz`, `KOP-3MERDP01`, and
+  `3mtracking.uhsinc.com`; **expires July 2028**.
+- **Self-signed (placeholder):** `.\venv\Scripts\python gen_cert.py` creates the
+  pair; clients then need `certs\3m-tracker.cer` imported into Trusted Root or
+  they'll see warnings.
+- Swapping certs is drop-in: replace the two PEM files and restart the
+  "IssueTracker App" scheduled task.
 
-```powershell
-copy config.example.ini config.ini
-notepad config.ini
-```
+## 4. Scheduled tasks (created by install.ps1, run as SYSTEM)
 
-- `[database]` — defaults (localhost + Windows auth) usually work as-is on the box.
-- `[smtp]` — set `host` to your relay's name. Port 25 / no auth is typical for
-  internal relays; if yours needs TLS or a login, fill those in.
-- `[app]` — set `app_url` to `http://<your-server-name>:8501`.
-- Adjust `categories` to whatever buckets make sense for your 3M issues.
+| Task | Schedule | What |
+|---|---|---|
+| IssueTracker App | At startup | Streamlit, headless, port 8501 (+TLS flags when enabled) |
+| IssueTracker Reminders | Thu 9:00 AM | Nags owners of Open/In Progress issues with no update this week |
+| IssueTracker Weekly Digest | Fri 7:00 AM | Digest of the Thu-2PM-to-Thu-2PM reporting week to all active users |
+| IssueTracker DB Backup | Daily 2:00 AM | `backup_db.ps1` → `C:\SQLBackups\IssueTracker`, verified, 14-day retention |
 
-## 5. Create your admin account and test
+Restart the app after code/config changes:
+`schtasks /End /TN "IssueTracker App"` then `schtasks /Run /TN "IssueTracker App"`.
+The email scripts are safe to re-run manually (they check `EmailLog` first).
 
-```powershell
-.\venv\Scripts\python create_admin.py
-.\venv\Scripts\python test_smtp.py Mike@sauersec47.com
-.\venv\Scripts\streamlit run app.py --server.address 0.0.0.0 --server.port 8501
-```
+## 5. App features (admin crib sheet)
 
-Browse to `http://localhost:8501`, log in, and create your team's accounts under
-**Admin**. Then open the firewall so teammates can reach it:
-
-```powershell
-netsh advfirewall firewall add rule name="3M Issue Tracker" dir=in action=allow protocol=TCP localport=8501
-```
-
-## 6. Run the app as a Windows service
-
-The simplest robust option is [NSSM](https://nssm.cc) (a small exe, no install):
-
-```powershell
-nssm install IssueTracker "C:\IssueTracker\venv\Scripts\streamlit.exe" "run C:\IssueTracker\app.py --server.address 0.0.0.0 --server.port 8501"
-nssm set IssueTracker AppDirectory C:\IssueTracker
-nssm start IssueTracker
-```
-
-(Alternative without NSSM: a Task Scheduler task set to run `streamlit.exe run ...`
-**At startup**, "whether user is logged on or not".)
-
-## 7. Schedule the emails (run in an elevated PowerShell)
-
-Reminders go out **Thursday 9:00 AM** (updates due by 2:00 PM), digest goes out
-**Friday 7:00 AM**:
-
-```powershell
-schtasks /Create /TN "IssueTracker Reminders" /SC WEEKLY /D THU /ST 09:00 /RU SYSTEM `
-  /TR "C:\IssueTracker\venv\Scripts\python.exe C:\IssueTracker\send_reminders.py"
-
-schtasks /Create /TN "IssueTracker Weekly Digest" /SC WEEKLY /D FRI /ST 07:00 /RU SYSTEM `
-  /TR "C:\IssueTracker\venv\Scripts\python.exe C:\IssueTracker\send_digest.py"
-```
-
-Both scripts are safe to re-run (they check `EmailLog` before sending), so you can
-test them manually anytime:
-
-```powershell
-.\venv\Scripts\python send_reminders.py
-.\venv\Scripts\python send_digest.py
-```
-
-If you run the tasks as `SYSTEM` with Windows auth to SQL Server, make sure
-`NT AUTHORITY\SYSTEM` has access to the `IssueTracker` database (it does by default
-on a local default instance; otherwise grant it, or run the tasks as a service
-account and grant that account access instead).
-
-## How the weekly cycle works
-
-- **Update deadline:** Thursday 2:00 PM Eastern, every week.
-- **Thursday 9:00 AM:** anyone with an Open / In Progress issue that has no update
-  since *last* Thursday 2:00 PM gets one reminder email listing their issues.
-- **Friday 7:00 AM:** everyone gets the digest covering the Thursday-to-Thursday
-  reporting week — new issues, resolved issues, all open issues with their latest
-  update, and issues that missed the deadline highlighted in yellow.
-
-> **Note:** timestamps are stored in SQL Server local time, and the deadline math
-> assumes the server clock is Eastern time. If the server is set to a different
-> timezone, tell me and I'll adjust the scripts.
+- **Auth:** username/password (PBKDF2) + TOTP 2FA (authenticator app, shows as
+  "3M Tracker"). New users and password resets force a password change at next
+  login. 5 failed attempts lock an account for 15 minutes. Sessions persist across
+  refreshes via a signed 12-hour cookie.
+- **Admin page:** create users, reset passwords, reset 2FA, activate/deactivate,
+  promote/demote admins (not yourself), and manage the Regions & Facilities lists
+  (seeded once by `schema.sql`, DB-managed thereafter).
+- **Issues:** status Open / In Progress / Waiting on Solventum (requires a Solventum
+  ticket #) / Hold / Closed; Major flag (closing a Major issue forces the
+  "applied to all regions?" prompt); fix proposals with accept/decline by the
+  assigned analyst (accept moves the issue to In Progress); Solventum + ServiceDesk
+  ticket badges; region/facility tagging; attachments (25 MB each, stored in the DB).
+- **Projects:** same shape, own lifecycle (Planned / In Progress / On Hold /
+  Completed / Cancelled).
+- **Collaboration:** lists and histories live-refresh; presence chips show who else
+  is viewing; first viewer holds the edit lock, others are read-only; idle holders
+  (10 min without interacting) lose the lock to a waiting viewer; admins can take
+  a lock over. Every field change is audited in the item's history with author and
+  old → new values.
 
 ## Troubleshooting
 
-- **`pyodbc` can't connect** — confirm the driver name in `config.ini` matches what's
-  installed (`Get-OdbcDriver` in PowerShell lists them; older boxes may have
-  "ODBC Driver 17 for SQL Server").
-- **Relay rejects mail** — many internal relays only accept mail from allowlisted IPs.
-  Ask your mail admin to allow the server's IP for anonymous relay.
-- **App unreachable from other machines** — check the firewall rule and that
-  Streamlit was started with `--server.address 0.0.0.0`.
+- **`pyodbc` IM002 "data source not found"** — the `driver` line in `config.ini`
+  doesn't match an installed ODBC driver (`Get-OdbcDriver` lists them).
+- **Login failed for `NT AUTHORITY\SYSTEM`** — re-run `schema.sql`; it grants the
+  SYSTEM account its database roles.
+- **App runs but nothing listens on the port** — the task must include
+  `--server.headless true`, or Streamlit silently waits on a first-run prompt.
+- **SMTP connects then times out with no banner** — the relay's IP allowlist
+  doesn't include this server yet.
+- **Client sees certificate warnings** — self-signed placeholder in use, or the
+  URL's hostname isn't in the cert's SANs.
+- **Emergency log-out of all users** — delete `session_secret.key` and restart the
+  app task (it regenerates; every session cookie becomes invalid).
