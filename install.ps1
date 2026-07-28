@@ -9,10 +9,11 @@
 #Requires -RunAsAdministrator
 param(
     [string]$Port = "8501",
-    [switch]$Tls,          # serve HTTPS using certs\cert.pem + key.pem (generated if missing)
+    [switch]$NoTls,        # serve plain HTTP instead of HTTPS (NOT recommended - passwords cross the wire in clear)
     [switch]$SkipSchema,
     [switch]$SkipTasks
 )
+$Tls = -not $NoTls        # HTTPS is the default; opt out only with -NoTls
 $ErrorActionPreference = "Stop"
 $AppDir = $PSScriptRoot
 Set-Location $AppDir
@@ -81,8 +82,9 @@ if (-not $SkipTasks) {
     $python    = "$AppDir\venv\Scripts\python.exe"
     $streamlit = "$AppDir\venv\Scripts\streamlit.exe"
 
-    # TLS (opt-in with -Tls): self-signed unless you've placed a CA-issued pair at
-    # certs\cert.pem + key.pem. Clients trust certs\3m-tracker.cer once (self-signed only).
+    # TLS is on by default (disable with -NoTls): self-signed unless you've placed a
+    # CA-issued pair at certs\cert.pem + key.pem. Clients trust certs\3m-tracker.cer
+    # once (self-signed only).
     $tlsArgs = ""
     if ($Tls) {
         if (-not (Test-Path "$AppDir\certs\cert.pem")) {
@@ -90,6 +92,8 @@ if (-not $SkipTasks) {
             & $python "$AppDir\gen_cert.py"
         }
         $tlsArgs = " --server.sslCertFile `"$AppDir\certs\cert.pem`" --server.sslKeyFile `"$AppDir\certs\key.pem`""
+    } else {
+        Write-Warning "Installing WITHOUT TLS (-NoTls): logins and session cookies will cross the network in cleartext."
     }
 
     Write-Host "Registering scheduled tasks..."

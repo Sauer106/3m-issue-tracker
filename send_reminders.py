@@ -6,6 +6,7 @@ Safe to re-run: it skips anything already reminded today via EmailLog.
 """
 import sys
 from collections import defaultdict
+from html import escape
 
 import db
 import reporting
@@ -27,12 +28,12 @@ def find_delinquent_issues(week_start):
 
 def build_body(user_name, issues, deadline, app_url):
     rows = "".join(
-        f"<tr><td>#{i['Id']}</td><td>{i['Title']}</td>"
-        f"<td>{i['Status']}</td><td>{i['CreatedAt']:%Y-%m-%d}</td></tr>"
+        f"<tr><td>#{i['Id']}</td><td>{escape(i['Title'])}</td>"
+        f"<td>{escape(i['Status'])}</td><td>{i['CreatedAt']:%Y-%m-%d}</td></tr>"
         for i in issues
     )
     return f"""
-    <p>Hi {user_name},</p>
+    <p>Hi {escape(user_name)},</p>
     <p>The following 3M issues assigned to you (or reported by you and unassigned)
     have <b>no update this week</b>. Updates are due by
     <b>{deadline:%A, %B %d} at 2:00 PM EST</b> so they make Friday's digest.</p>

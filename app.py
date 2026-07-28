@@ -33,6 +33,8 @@ NEUTRAL = "#607d8b"
 
 
 def chip(text, color=NEUTRAL):
+    # `color` is interpolated into the style attribute WITHOUT escaping; only ever
+    # pass trusted constants (hex codes) here, never user-controlled data.
     return (f"<span class='chip' style='background:{color}22; color:{color}; "
             f"border:1px solid {color}55'>{html.escape(str(text))}</span>")
 
@@ -409,9 +411,12 @@ SESSION_COOKIE = "tracker_session"
 
 
 def _write_cookie(value, max_age):
+    # Mark the session cookie Secure when the app is served over HTTPS (per the
+    # configured app_url) so browsers never transmit it over cleartext.
+    secure = "; Secure" if db.get_config()["app"].get("app_url", "").startswith("https") else ""
     components.html(
         f"<script>parent.document.cookie = "
-        f"'{SESSION_COOKIE}={value}; path=/; max-age={max_age}; SameSite=Lax';</script>",
+        f"'{SESSION_COOKIE}={value}; path=/; max-age={max_age}; SameSite=Lax{secure}';</script>",
         height=0,
     )
 

@@ -11,7 +11,7 @@ from an **elevated** PowerShell:
 
 ```powershell
 cd C:\path\to\3m-issue-tracker
-powershell -ExecutionPolicy Bypass -File install.ps1 -Tls
+powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 `install.ps1` creates the venv, installs packages, runs `schema.sql` (idempotent —
@@ -19,8 +19,9 @@ safe to re-run for upgrades), opens `config.ini` for editing on first install, a
 the firewall rule, registers the scheduled tasks (app, reminder emails, digest,
 nightly DB backup), starts the app, and prompts for the first admin account.
 
-Flags: `-Tls` serves HTTPS (see TLS below — omit for plain HTTP), `-Port` (default
-8501), `-SkipSchema`, `-SkipTasks`.
+HTTPS is on by default (see TLS below). Flags: `-NoTls` serves plain HTTP instead
+(not recommended — credentials cross the wire in clear), `-Port` (default 8501),
+`-SkipSchema`, `-SkipTasks`.
 
 ## What's in this folder
 
@@ -63,8 +64,8 @@ delete it to force-log-out everyone), `venv\`.
 
 ## 3. TLS
 
-The app serves HTTPS from `certs\cert.pem` + `certs\key.pem` when the scheduled
-task includes the TLS flags (`install.ps1 -Tls`).
+The app serves HTTPS from `certs\cert.pem` + `certs\key.pem` by default (disable
+with `install.ps1 -NoTls`).
 
 - **CA-issued cert (production):** generate a CSR with `certreq` (key stays on the
   server, mark it `Exportable = TRUE`), have your PKI team issue it, then

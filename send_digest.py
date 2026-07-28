@@ -7,6 +7,7 @@ Safe to re-run: it skips sending if a digest already went out since the cutoff.
 """
 import sys
 from datetime import timedelta
+from html import escape
 
 import db
 import reporting
@@ -38,15 +39,16 @@ def issue_table(issues, updates, cutoff):
         upd = updates.get(i["Id"])
         if upd:
             comment = upd["Comment"][:300] + ("..." if len(upd["Comment"]) > 300 else "")
-            last = f"{upd['AuthorName']} ({upd['CreatedAt']:%m/%d}): {comment}"
+            last = (f"{escape(upd['AuthorName'])} ({upd['CreatedAt']:%m/%d}): "
+                    f"{escape(comment)}")
             missed = ' style="background:#fff3cd"' if upd["CreatedAt"] < cutoff - timedelta(days=7) else ""
         else:
             last = "<i>No updates yet</i>"
             missed = ' style="background:#fff3cd"'
-        assignee = i["AssignedToName"] or "<i>Unassigned</i>"
+        assignee = escape(i["AssignedToName"]) if i["AssignedToName"] else "<i>Unassigned</i>"
         rows += (
-            f"<tr{missed}><td>#{i['Id']}</td><td>{i['Title']}</td>"
-            f"<td>{i['Status']}</td><td>{assignee}</td><td>{last}</td></tr>"
+            f"<tr{missed}><td>#{i['Id']}</td><td>{escape(i['Title'])}</td>"
+            f"<td>{escape(i['Status'])}</td><td>{assignee}</td><td>{last}</td></tr>"
         )
     return (
         '<table border="1" cellpadding="6" cellspacing="0">'
