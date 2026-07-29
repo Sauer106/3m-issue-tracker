@@ -79,6 +79,67 @@ with `install.ps1 -NoTls`).
 - Swapping certs is drop-in: replace the two PEM files and restart the
   "IssueTracker App" scheduled task.
 
+## 3a. Clean URL via IIS reverse proxy (production)
+
+By default the app is reached at `https://<host>:8501`. To serve it on a clean
+no-port URL (`https://3mtracking.uhsinc.com`), IIS on port 443 reverse-proxies to
+Streamlit on 8501. This is **IIS server config, not part of the app repo or
+install.ps1** — if the box is rebuilt, redo these steps. It is a *reverse proxy*
+(browser stays on the clean URL), not a redirect (which would expose `:8501`).
+
+On this server, IIS 443 is shared with an existing RD Web Access site. The steps
+below add a **separate** site with an SNI host-header binding, so RD Web (its
+`*:443:` catch-all) is untouched — http.sys routes by SNI hostname.
+
+1. **Install the modules** (one-time). WebSockets is a Windows feature; URL Rewrite
+   and ARR are MSIs from Microsoft (Streamlit needs the WebSocket passthrough):
+   ```powershell
+   Install-WindowsFeature Web-WebSockets
+   # URL Rewrite 2.1 + Application Request Routing 3.0 (download + silent install)
+   msiexec /i rewrite_amd64_en-US.msi /qn /norestart
+   msiexec /i requestRouter_amd64.msi /qn /norestart
+   ```
+2. **Enable ARR proxying + preserve host header** (host header must reach Streamlit
+   so its XSRF/Origin check passes):
+   ```powershell
+   $appcmd = "$env:windir\System32\inetsrv\appcmd.exe"
+   & $appcmd set config -section:system.webServer/proxy /enabled:"true" /commit:apphost
+   & $appcmd set config -section:system.webServer/proxy /preserveHostHeader:"true" /commit:apphost
+   ```
+3. **Create the site** with an SNI HTTPS binding and bind the cert. The proxy target
+   uses `kop-3merdp01` (a SAN on the cert) so backend TLS validates:
+   ```powershell
+   New-Item -ItemType Directory -Force C:\inetpub\3mtracking   # holds web.config below
+   & $appcmd add site /name:"3M Tracker" /physicalPath:"C:\inetpub\3mtracking" `
+       /bindings:"https/*:443:3mtracking.uhsinc.com"
+   & $appcmd set site "3M Tracker" `
+       "/bindings.[protocol='https',bindingInformation='*:443:3mtracking.uhsinc.com'].sslFlags:1"
+   # bind the cert that covers 3mtracking.uhsinc.com (thumbprint from Cert:\LocalMachine\My)
+   netsh http add sslcert hostnameport=3mtracking.uhsinc.com:443 certhash=<THUMBPRINT> `
+       appid="{4dc3e181-e14b-4a21-b022-59fc669b0914}" certstorename=MY
+   & $appcmd start site "3M Tracker"
+   ```
+4. **`C:\inetpub\3mtracking\web.config`** — the reverse-proxy rule:
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <configuration>
+     <system.webServer>
+       <rewrite><rules>
+         <rule name="ProxyToStreamlit" stopProcessing="true">
+           <match url="(.*)" />
+           <action type="Rewrite" url="https://kop-3merdp01:8501/{R:1}" />
+         </rule>
+       </rules></rewrite>
+     </system.webServer>
+   </configuration>
+   ```
+5. Set `app_url = https://3mtracking.uhsinc.com` in `config.ini` (no port) so email
+   links use the clean URL, and restart the "IssueTracker App" task.
+
+Verify: `https://3mtracking.uhsinc.com` returns 200, the RD Web URL still returns
+200, and a browser login works (confirms the WebSocket proxies). The direct
+`https://<host>:8501` keeps working as a fallback.
+
 ## 4. Scheduled tasks (created by install.ps1, run as SYSTEM)
 
 | Task | Schedule | What |
