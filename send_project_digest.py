@@ -18,6 +18,37 @@ UPCOMING_DAYS = 30
 EVENT_PILL_COLORS = {"Go-Live": "#2e7d32", "Deadline": "#c62828", "Projected Go-Live": "#e65100"}
 
 
+def milestone_table(rows, today, overdue=False):
+    """An email-safe table of milestones (Project / Milestone / Due [/ Overdue])."""
+    if not rows:
+        return ""
+    th = (f'padding:8px 10px;font-family:{es.FONT};font-size:11px;color:{es.MUTED};'
+          f'text-transform:uppercase;letter-spacing:.03em;text-align:left;'
+          f'background:#f3f4f6;border-bottom:2px solid {es.BORDER};')
+    body = ""
+    for idx, m in enumerate(rows):
+        td = (f'padding:9px 10px;font-family:{es.FONT};font-size:13px;color:{es.INK};'
+              f'border-bottom:1px solid {es.BORDER};vertical-align:top;')
+        bg = "#ffffff" if idx % 2 == 0 else "#fafbfc"
+        extra = ""
+        if overdue:
+            days = (today - m["DueDate"]).days
+            extra = (f'<td style="{td}white-space:nowrap;color:#c62828;font-weight:bold;">'
+                     f'{days} day{"s" if days != 1 else ""}</td>')
+        body += (f'<tr style="background:{bg};">'
+                 f'<td style="{td}font-weight:bold;">{es.escape(m["ProjectTitle"])}</td>'
+                 f'<td style="{td}">{es.escape(m["Name"])}</td>'
+                 f'<td style="{td}white-space:nowrap;color:{es.MUTED};">{m["DueDate"]:%b %d, %Y}</td>'
+                 f'{extra}</tr>')
+    overdue_th = f'<th style="{th}">Overdue</th>' if overdue else ""
+    return (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="border-collapse:collapse;border:1px solid {es.BORDER};">'
+        f'<tr><th style="{th}">Project</th><th style="{th}">Milestone</th>'
+        f'<th style="{th}">Due</th>{overdue_th}</tr>{body}</table>'
+    )
+
+
 def upcoming_table(events):
     """An email-safe table of upcoming calendar events."""
     if not events:
@@ -79,7 +110,10 @@ def completed_this_week_ids(week_start):
 
 
 def build_html(active, new_projects, completed, on_hold, updates, upcoming_html,
-               cutoff, week_start, app_url):
+               overdue_html, cutoff, week_start, app_url):
+    overdue_section = ""
+    if overdue_html:
+        overdue_section = es.section_row("⚠ Overdue Milestones") + es.table_row(overdue_html)
     upcoming_section = ""
     if upcoming_html:
         upcoming_section = (es.section_row(f"Upcoming — Next {UPCOMING_DAYS} Days")
@@ -91,6 +125,7 @@ def build_html(active, new_projects, completed, on_hold, updates, upcoming_html,
             es.stat_tile(len(completed), "Completed this week", "#2e7d32"),
             es.stat_tile(len(on_hold), "On hold", "#e65100" if on_hold else "#9ca3af"),
         )
+        + overdue_section
         + upcoming_section
         + es.section_row("Active Projects")
         + es.table_row(es.item_table(active, updates))
@@ -120,8 +155,10 @@ def render(config):
     up_start = cutoff.date()
     up_end = up_start + timedelta(days=UPCOMING_DAYS)
     upcoming_html = upcoming_table(db.list_events(up_start, up_end))
+    overdue_html = milestone_table(db.list_overdue_milestones(),
+                                   reporting._now_local(config).date(), overdue=True)
     html = build_html(active, new_projects, completed, on_hold, updates, upcoming_html,
-                      cutoff, week_start, app_url)
+                      overdue_html, cutoff, week_start, app_url)
     subject = f"3M Weekly Project Digest {cutoff:%B %d, %Y}"
     return subject, html
 

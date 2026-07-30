@@ -6,6 +6,7 @@ Safe to re-run: it skips anything already reminded today via EmailLog.
 """
 import sys
 from collections import defaultdict
+from datetime import datetime
 from html import escape
 
 import db
@@ -13,6 +14,9 @@ import email_style as es
 import reporting
 from mailer import send_email
 from send_digest import latest_update_map
+
+# Far-past cutoff: milestone-overdue notices fire once per milestone, ever.
+_EVER = datetime(2000, 1, 1)
 
 
 def find_delinquent_issues(week_start):
@@ -51,6 +55,73 @@ def build_body(user_name, issues, deadline, app_url):
                     title="3M Issues")
 
 
+def build_milestone_body(user_name, rows, today, app_url):
+    th = (f'padding:8px 10px;font-family:{es.FONT};font-size:11px;color:{es.MUTED};'
+          f'text-transform:uppercase;letter-spacing:.03em;text-align:left;'
+          f'background:#f3f4f6;border-bottom:2px solid {es.BORDER};')
+    body = ""
+    for idx, m in enumerate(rows):
+        td = (f'padding:9px 10px;font-family:{es.FONT};font-size:13px;color:{es.INK};'
+              f'border-bottom:1px solid {es.BORDER};vertical-align:top;')
+        bg = "#ffffff" if idx % 2 == 0 else "#fafbfc"
+        days = (today - m["DueDate"]).days
+        body += (f'<tr style="background:{bg};">'
+                 f'<td style="{td}font-weight:bold;">{escape(m["ProjectTitle"])}</td>'
+                 f'<td style="{td}">{escape(m["Name"])}</td>'
+                 f'<td style="{td}white-space:nowrap;color:{es.MUTED};">{m["DueDate"]:%b %d, %Y}</td>'
+                 f'<td style="{td}white-space:nowrap;color:#c62828;font-weight:bold;">'
+                 f'{days} day{"s" if days != 1 else ""}</td></tr>')
+    table = (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+             f'style="border-collapse:collapse;border:1px solid {es.BORDER};">'
+             f'<tr><th style="{th}">Project</th><th style="{th}">Milestone</th>'
+             f'<th style="{th}">Due</th><th style="{th}">Overdue</th></tr>{body}</table>')
+    count = len(rows)
+    intro = (f"Hi {escape(user_name)}, you have <b>{count} overdue milestone"
+             f"{'s' if count != 1 else ''}</b> on project(s) assigned to you. "
+             "Please update the target date or mark them done.")
+    inner = (es.intro_row(intro) + es.section_row("Overdue Milestones")
+             + es.table_row(table, bottom=4))
+    footer = ("You are receiving this because these projects are assigned to you. "
+              "This is an automated message from the 3M Issues &amp; Projects Tracker.")
+    link = app_url.rstrip("/") + "/?page=Projects"
+    return es.shell("Overdue Milestones", inner, link, footer, button_text="Open Projects",
+                    title="3M Projects")
+
+
+def send_milestone_reminders(config, app_url):
+    """Email each project owner once about any milestone that has gone overdue."""
+    overdue = db.list_overdue_milestones()
+    if not overdue:
+        print("No overdue milestones.")
+        return
+    today = reporting._now_local(config).date()
+    users = {u["Id"]: u for u in db.list_users()}
+    by_owner = defaultdict(list)
+    for m in overdue:
+        owner = users.get(m["AssignedTo"]) if m["AssignedTo"] else None
+        if not (owner and owner["IsActive"] and owner["Email"] and owner["ReceivesReminders"]):
+            print(f"Skipping milestone #{m['Id']}: owner inactive, unassigned, no email, "
+                  "or reminders off.")
+            continue
+        if not db.email_already_sent("milestone_overdue", owner["Email"], _EVER, m["Id"]):
+            by_owner[m["AssignedTo"]].append(m)
+
+    sent = 0
+    for owner_id, rows in by_owner.items():
+        owner = users[owner_id]
+        try:
+            send_email(config, [owner["Email"]], "3M Overdue Milestones",
+                       build_milestone_body(owner["DisplayName"], rows, today, app_url))
+        except Exception as exc:
+            print(f"FAILED milestone reminder to {owner['Email']}: {exc}", file=sys.stderr)
+            continue
+        for m in rows:
+            db.log_email("milestone_overdue", owner["Email"], m["Id"])
+        sent += 1
+        print(f"Reminded {owner['Email']} about {len(rows)} overdue milestone(s).")
+    print(f"{sent} milestone reminder email(s) sent.")
+
+
 def main():
     config = db.get_config()
     deadline = reporting.upcoming_deadline(config)
@@ -60,7 +131,8 @@ def main():
 
     issues = find_delinquent_issues(week_start)
     if not issues:
-        print("No delinquent issues. Nothing to send.")
+        print("No delinquent issues.")
+        send_milestone_reminders(config, app_url)
         return
 
     users = {u["Id"]: u for u in db.list_users()}
@@ -95,6 +167,7 @@ def main():
         print(f"Reminded {owner['Email']} about {len(to_send)} issue(s).")
 
     print(f"Done. {sent} reminder email(s) sent for {len(issues)} delinquent issue(s).")
+    send_milestone_reminders(config, app_url)
 
 
 if __name__ == "__main__":

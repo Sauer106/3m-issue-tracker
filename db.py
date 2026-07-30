@@ -470,7 +470,8 @@ def list_overdue_milestones():
     """Open, past-due milestones on live projects (not deleted/Completed/Cancelled)."""
     return query(
         """SELECT m.Id, m.Name, m.DueDate, m.ProjectId, p.Title AS ProjectTitle,
-                  p.Status AS ProjectStatus, a.DisplayName AS AssignedToName
+                  p.Status AS ProjectStatus, p.AssignedTo AS AssignedTo,
+                  a.DisplayName AS AssignedToName
            FROM ProjectMilestones m
            JOIN Projects p ON p.Id = m.ProjectId
            LEFT JOIN Users a ON a.Id = p.AssignedTo
