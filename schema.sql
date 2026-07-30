@@ -419,6 +419,68 @@ BEGIN
 END
 GO
 
+-- Admin-managed master lists for project involvement (v1.4). Flat lists like Regions;
+-- start empty, populated from the Admin page. Project rows store the name as a snapshot.
+IF OBJECT_ID('dbo.InternalTeams') IS NULL
+BEGIN
+    CREATE TABLE dbo.InternalTeams (
+        Id        INT IDENTITY(1,1) PRIMARY KEY,
+        Name      NVARCHAR(100) NOT NULL UNIQUE,
+        SortOrder INT NOT NULL DEFAULT 0
+    );
+END
+GO
+
+IF OBJECT_ID('dbo.Vendors') IS NULL
+BEGIN
+    CREATE TABLE dbo.Vendors (
+        Id        INT IDENTITY(1,1) PRIMARY KEY,
+        Name      NVARCHAR(100) NOT NULL UNIQUE,
+        SortOrder INT NOT NULL DEFAULT 0
+    );
+END
+GO
+
+-- Per-project involvement rows (FK to Projects, no cascade - purge_project clears them).
+IF OBJECT_ID('dbo.ProjectTeams') IS NULL
+BEGIN
+    CREATE TABLE dbo.ProjectTeams (
+        Id        INT IDENTITY(1,1) PRIMARY KEY,
+        ProjectId INT NOT NULL REFERENCES dbo.Projects(Id),
+        Team      NVARCHAR(100) NOT NULL,      -- snapshot of the team name
+        Analysts  NVARCHAR(MAX) NULL,          -- free text
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+    );
+    CREATE INDEX IX_ProjectTeams_Project ON dbo.ProjectTeams(ProjectId);
+END
+GO
+
+IF OBJECT_ID('dbo.ProjectVendors') IS NULL
+BEGIN
+    CREATE TABLE dbo.ProjectVendors (
+        Id        INT IDENTITY(1,1) PRIMARY KEY,
+        ProjectId INT NOT NULL REFERENCES dbo.Projects(Id),
+        Vendor    NVARCHAR(100) NOT NULL,      -- snapshot of the vendor name
+        Role      NVARCHAR(MAX) NULL,
+        Contact   NVARCHAR(200) NULL,
+        Status    NVARCHAR(50)  NULL,
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+    );
+    CREATE INDEX IX_ProjectVendors_Project ON dbo.ProjectVendors(ProjectId);
+END
+GO
+
+-- Calendar event resources: one or more assigned users per event (required in the app).
+IF OBJECT_ID('dbo.CalendarEventResources') IS NULL
+BEGIN
+    CREATE TABLE dbo.CalendarEventResources (
+        EventId INT NOT NULL REFERENCES dbo.CalendarEvents(Id) ON DELETE CASCADE,
+        UserId  INT NOT NULL REFERENCES dbo.Users(Id),
+        CONSTRAINT PK_CalendarEventResources PRIMARY KEY (EventId, UserId)
+    );
+END
+GO
+
 -- The app and email scripts run as SYSTEM via Task Scheduler; grant it access.
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'NT AUTHORITY\SYSTEM')
     CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
@@ -470,5 +532,17 @@ SELECT p.Id, p.Title, p.Status, p.SolventumTicket, p.ServiceDeskTicket,
 FROM Projects p
 JOIN Users c ON c.Id = p.CreatedBy
 LEFT JOIN Users a ON a.Id = p.AssignedTo
+WHERE p.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_ProjectTeams AS
+SELECT pt.ProjectId, p.Title AS Project, p.Status, pt.Team, pt.Analysts
+FROM ProjectTeams pt JOIN Projects p ON p.Id = pt.ProjectId
+WHERE p.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_ProjectVendors AS
+SELECT pv.ProjectId, p.Title AS Project, p.Status, pv.Vendor, pv.Role, pv.Contact, pv.Status AS VendorStatus
+FROM ProjectVendors pv JOIN Projects p ON p.Id = pv.ProjectId
 WHERE p.DeletedAt IS NULL;
 GO

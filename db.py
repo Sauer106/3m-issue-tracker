@@ -450,6 +450,8 @@ def purge_project(project_id):
     execute("DELETE FROM ProjectUpdates WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM CalendarEventProjects WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM ProjectMilestones WHERE ProjectId = ?", (project_id,))
+    execute("DELETE FROM ProjectTeams WHERE ProjectId = ?", (project_id,))
+    execute("DELETE FROM ProjectVendors WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM Projects WHERE Id = ?", (project_id,))
 
 
@@ -521,6 +523,92 @@ def next_milestones_map():
     return {r["ProjectId"]: r for r in rows}
 
 
+# ------------------------------------------------ internal teams & vendors (master lists)
+
+def list_teams():
+    return query("SELECT * FROM InternalTeams ORDER BY SortOrder, Name")
+
+
+def team_names():
+    return [t["Name"] for t in list_teams()]
+
+
+def create_team(name):
+    return insert_returning_id(
+        """INSERT INTO InternalTeams (Name, SortOrder) OUTPUT INSERTED.Id
+           SELECT ?, ISNULL(MAX(SortOrder), 0) + 1 FROM InternalTeams""", (name,))
+
+
+def rename_team(team_id, name):
+    execute("UPDATE InternalTeams SET Name = ? WHERE Id = ?", (name, team_id))
+
+
+def delete_team(team_id):
+    execute("DELETE FROM InternalTeams WHERE Id = ?", (team_id,))
+
+
+def list_vendors():
+    return query("SELECT * FROM Vendors ORDER BY SortOrder, Name")
+
+
+def vendor_names():
+    return [v["Name"] for v in list_vendors()]
+
+
+def create_vendor(name):
+    return insert_returning_id(
+        """INSERT INTO Vendors (Name, SortOrder) OUTPUT INSERTED.Id
+           SELECT ?, ISNULL(MAX(SortOrder), 0) + 1 FROM Vendors""", (name,))
+
+
+def rename_vendor(vendor_id, name):
+    execute("UPDATE Vendors SET Name = ? WHERE Id = ?", (name, vendor_id))
+
+
+def delete_vendor(vendor_id):
+    execute("DELETE FROM Vendors WHERE Id = ?", (vendor_id,))
+
+
+# ------------------------------------------------ per-project teams & vendors
+
+def list_project_teams(project_id):
+    return query("SELECT * FROM ProjectTeams WHERE ProjectId = ? ORDER BY Team, Id", (project_id,))
+
+
+def add_project_team(project_id, team, analysts=None):
+    return insert_returning_id(
+        "INSERT INTO ProjectTeams (ProjectId, Team, Analysts) OUTPUT INSERTED.Id VALUES (?, ?, ?)",
+        (project_id, team, analysts))
+
+
+def update_project_team(team_row_id, analysts):
+    execute("UPDATE ProjectTeams SET Analysts = ? WHERE Id = ?", (analysts, team_row_id))
+
+
+def delete_project_team(team_row_id):
+    execute("DELETE FROM ProjectTeams WHERE Id = ?", (team_row_id,))
+
+
+def list_project_vendors(project_id):
+    return query("SELECT * FROM ProjectVendors WHERE ProjectId = ? ORDER BY Vendor, Id", (project_id,))
+
+
+def add_project_vendor(project_id, vendor, role=None, contact=None, status=None):
+    return insert_returning_id(
+        """INSERT INTO ProjectVendors (ProjectId, Vendor, Role, Contact, Status)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?)""",
+        (project_id, vendor, role, contact, status))
+
+
+def update_project_vendor(vendor_row_id, role=None, contact=None, status=None):
+    execute("UPDATE ProjectVendors SET Role = ?, Contact = ?, Status = ? WHERE Id = ?",
+            (role, contact, status, vendor_row_id))
+
+
+def delete_project_vendor(vendor_row_id):
+    execute("DELETE FROM ProjectVendors WHERE Id = ?", (vendor_row_id,))
+
+
 def list_project_updates(project_id):
     return query(
         """SELECT u.*, usr.DisplayName AS AuthorName
@@ -533,7 +621,7 @@ def list_project_updates(project_id):
 # ---------------------------------------------------------------- calendar
 
 def create_event(title, event_date, created_by, event_time=None, end_date=None,
-                 category="Other", description=None, project_ids=None):
+                 category="Other", description=None, project_ids=None, resource_ids=None):
     event_id = insert_returning_id(
         """INSERT INTO CalendarEvents (Title, EventDate, EventTime, EndDate, Category,
                                        Description, CreatedBy)
@@ -541,11 +629,12 @@ def create_event(title, event_date, created_by, event_time=None, end_date=None,
         (title, event_date, event_time, end_date, category, description, created_by),
     )
     set_event_projects(event_id, project_ids or [])
+    set_event_resources(event_id, resource_ids or [])
     return event_id
 
 
 def update_event(event_id, title, event_date, event_time=None, end_date=None,
-                 category="Other", description=None, project_ids=None):
+                 category="Other", description=None, project_ids=None, resource_ids=None):
     execute(
         """UPDATE CalendarEvents SET Title = ?, EventDate = ?, EventTime = ?, EndDate = ?,
                   Category = ?, Description = ?, UpdatedAt = SYSDATETIME() WHERE Id = ?""",
@@ -553,6 +642,8 @@ def update_event(event_id, title, event_date, event_time=None, end_date=None,
     )
     if project_ids is not None:
         set_event_projects(event_id, project_ids)
+    if resource_ids is not None:
+        set_event_resources(event_id, resource_ids)
 
 
 def delete_event(event_id):
@@ -566,6 +657,23 @@ def set_event_projects(event_id, project_ids):
     for pid in dict.fromkeys(project_ids):  # de-dup, keep order
         execute("INSERT INTO CalendarEventProjects (EventId, ProjectId) VALUES (?, ?)",
                 (event_id, pid))
+
+
+def set_event_resources(event_id, user_ids):
+    """Replace the set of resource users assigned to an event."""
+    execute("DELETE FROM CalendarEventResources WHERE EventId = ?", (event_id,))
+    for uid in dict.fromkeys(user_ids):  # de-dup, keep order
+        execute("INSERT INTO CalendarEventResources (EventId, UserId) VALUES (?, ?)",
+                (event_id, uid))
+
+
+def list_event_resources(event_id):
+    return query(
+        """SELECT u.Id, u.DisplayName FROM CalendarEventResources er
+           JOIN Users u ON u.Id = er.UserId
+           WHERE er.EventId = ? ORDER BY u.DisplayName""",
+        (event_id,),
+    )
 
 
 EVENT_SELECT = """

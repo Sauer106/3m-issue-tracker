@@ -39,6 +39,10 @@ LEADERSHIP_STR = ", ".join(LEADERSHIP)
 
 # Managed from the Admin page (Regions/Facilities tables); reloaded every rerun.
 REGIONS = db.get_region_map()
+# Admin-managed master lists for project involvement (reloaded each rerun).
+TEAMS = db.team_names()
+VENDORS = db.vendor_names()
+VENDOR_STATUSES = ["Engaged", "Pending", "Completed", "On hold"]
 
 st.set_page_config(page_title="3M Issues & Projects Tracker", page_icon="🎯", layout="wide")
 
@@ -122,8 +126,9 @@ def due_chip(issue):
 
 
 # Calendar event categories and their colors (also used for the project-target marker).
-EVENT_CATEGORIES = ["Go-Live", "Deadline", "Projected Go-Live"]
-EVENT_COLORS = {"Go-Live": "#388e3c", "Deadline": "#d32f2f", "Projected Go-Live": "#f57c00"}
+EVENT_CATEGORIES = ["Go-Live", "Deadline", "Projected Go-Live", "Testing Event"]
+EVENT_COLORS = {"Go-Live": "#388e3c", "Deadline": "#d32f2f", "Projected Go-Live": "#f57c00",
+                "Testing Event": "#1976d2"}
 PROJECT_TARGET_COLOR = "#00796b"
 
 
@@ -1284,6 +1289,102 @@ def project_detail(project_id, user):
                         st.warning("Enter a milestone name.")
 
     with st.container(border=True):
+        st.markdown("**👥 Internal Teams**")
+        teams = db.list_project_teams(project_id)
+        if not teams:
+            st.caption("No internal teams recorded yet.")
+        for t in teams:
+            analysts = t["Analysts"] or ""
+            if editable:
+                with st.expander(t["Team"] + (f" — {analysts}" if analysts else "")):
+                    new_analysts = st.text_area("Analyst(s)", value=analysts, key=f"pt_a_{t['Id']}",
+                                                height=70, placeholder="Analyst(s) on this team")
+                    e1, e2 = st.columns(2)
+                    if e1.button("Save", key=f"pt_s_{t['Id']}", use_container_width=True):
+                        db.update_project_team(t["Id"], new_analysts.strip() or None)
+                        db.add_project_update(project_id, user["Id"], f"👥 Updated team: {t['Team']}")
+                        db.audit(user["Id"], "project_team_update", f"project #{project_id} {t['Team']}")
+                        st.rerun()
+                    if e2.button("🗑 Delete", key=f"pt_d_{t['Id']}", use_container_width=True):
+                        db.delete_project_team(t["Id"])
+                        db.add_project_update(project_id, user["Id"], f"🗑 Removed team: {t['Team']}")
+                        db.audit(user["Id"], "project_team_delete", f"project #{project_id} {t['Team']}")
+                        st.rerun()
+            else:
+                st.markdown(f"**{html.escape(t['Team'])}**"
+                            + (f" — {html.escape(analysts)}" if analysts else ""))
+        if editable:
+            with st.form(f"add_pt_{project_id}", clear_on_submit=True):
+                a1, a2, a3 = st.columns([2, 3, 1], vertical_alignment="bottom")
+                pt_team = a1.selectbox("Team", TEAMS, label_visibility="collapsed") if TEAMS else None
+                pt_analysts = a2.text_input("Analyst(s)", label_visibility="collapsed",
+                                            placeholder="Analyst(s)")
+                if a3.form_submit_button("Add", use_container_width=True, disabled=not TEAMS):
+                    if pt_team:
+                        db.add_project_team(project_id, pt_team, pt_analysts.strip() or None)
+                        db.add_project_update(project_id, user["Id"], f"👥 Added team: {pt_team}")
+                        db.audit(user["Id"], "project_team_add", f"project #{project_id} {pt_team}")
+                        st.rerun()
+            if not TEAMS:
+                st.caption("Add teams on the Admin page first.")
+
+    with st.container(border=True):
+        st.markdown("**🏢 Vendors**")
+        vendors = db.list_project_vendors(project_id)
+        if not vendors:
+            st.caption("No vendors recorded yet.")
+        for v in vendors:
+            if editable:
+                with st.expander(v["Vendor"] + (f" · {v['Status']}" if v["Status"] else "")):
+                    v_role = st.text_input("Role / involvement", value=v["Role"] or "",
+                                           key=f"pv_r_{v['Id']}")
+                    v_contact = st.text_input("Contact", value=v["Contact"] or "", key=f"pv_c_{v['Id']}")
+                    opts = ["—"] + VENDOR_STATUSES + (
+                        [v["Status"]] if v["Status"] and v["Status"] not in VENDOR_STATUSES else [])
+                    v_status = st.selectbox("Status", opts,
+                                            index=opts.index(v["Status"]) if v["Status"] in opts else 0,
+                                            key=f"pv_s_{v['Id']}")
+                    e1, e2 = st.columns(2)
+                    if e1.button("Save", key=f"pv_save_{v['Id']}", use_container_width=True):
+                        db.update_project_vendor(v["Id"], v_role.strip() or None,
+                                                 v_contact.strip() or None,
+                                                 None if v_status == "—" else v_status)
+                        db.add_project_update(project_id, user["Id"], f"🏢 Updated vendor: {v['Vendor']}")
+                        db.audit(user["Id"], "project_vendor_update", f"project #{project_id} {v['Vendor']}")
+                        st.rerun()
+                    if e2.button("🗑 Delete", key=f"pv_del_{v['Id']}", use_container_width=True):
+                        db.delete_project_vendor(v["Id"])
+                        db.add_project_update(project_id, user["Id"], f"🗑 Removed vendor: {v['Vendor']}")
+                        db.audit(user["Id"], "project_vendor_delete", f"project #{project_id} {v['Vendor']}")
+                        st.rerun()
+            else:
+                line = f"**{html.escape(v['Vendor'])}**"
+                if v["Status"]:
+                    line += f" · {html.escape(v['Status'])}"
+                if v["Role"]:
+                    line += f" — {html.escape(v['Role'])}"
+                if v["Contact"]:
+                    line += f" · {html.escape(v['Contact'])}"
+                st.markdown(line)
+        if editable:
+            with st.form(f"add_pv_{project_id}", clear_on_submit=True):
+                pv_vendor = st.selectbox("Vendor", VENDORS) if VENDORS else None
+                b1, b2, b3 = st.columns(3)
+                pv_role = b1.text_input("Role / involvement")
+                pv_contact = b2.text_input("Contact")
+                pv_status = b3.selectbox("Status", ["—"] + VENDOR_STATUSES)
+                if st.form_submit_button("Add vendor", use_container_width=True, disabled=not VENDORS):
+                    if pv_vendor:
+                        db.add_project_vendor(project_id, pv_vendor, pv_role.strip() or None,
+                                              pv_contact.strip() or None,
+                                              None if pv_status == "—" else pv_status)
+                        db.add_project_update(project_id, user["Id"], f"🏢 Added vendor: {pv_vendor}")
+                        db.audit(user["Id"], "project_vendor_add", f"project #{project_id} {pv_vendor}")
+                        st.rerun()
+            if not VENDORS:
+                st.caption("Add vendors on the Admin page first.")
+
+    with st.container(border=True):
         cc1, cc2 = st.columns([6, 1], vertical_alignment="center")
         cc1.markdown("**📅 Calendar**")
         if editable and cc2.button("➕ Add", key=f"addcal_{project_id}", use_container_width=True):
@@ -1303,7 +1404,8 @@ def project_detail(project_id, user):
                 when += f" → {e['EndDate']:%b %d}"
             ec1, ec2 = st.columns([6, 1], vertical_alignment="center")
             ec1.markdown(f"{chip(e['Category'], color)} {html.escape(e['Title'])}"
-                         f"<p class='issue-meta'>{when}</p>", unsafe_allow_html=True)
+                         f"<p class='issue-meta'>{when}</p>{_event_resource_chips(e['Id'])}",
+                         unsafe_allow_html=True)
             if ec2.button("Open", key=f"pcalev_{e['Id']}", use_container_width=True):
                 st.session_state.open_event_id = e["Id"]
                 st.session_state.page = "Calendar"
@@ -1431,11 +1533,12 @@ _CAL_CSS = """
 [class*="st-key-calbtngl_"] button { border-left:3px solid #388e3c; }
 [class*="st-key-calbtndl_"] button { border-left:3px solid #d32f2f; }
 [class*="st-key-calbtnpgl_"] button { border-left:3px solid #f57c00; }
+[class*="st-key-calbtnte_"] button { border-left:3px solid #1976d2; }
 </style>
 """
 
 # Short, class-safe codes for the per-category button border colors above.
-CAT_CODE = {"Go-Live": "gl", "Deadline": "dl", "Projected Go-Live": "pgl"}
+CAT_CODE = {"Go-Live": "gl", "Deadline": "dl", "Projected Go-Live": "pgl", "Testing Event": "te"}
 
 
 def _render_month_grid(weeks, month, events_by_day, today, user):
@@ -1482,6 +1585,9 @@ def _event_form(user, event):
     projects = db.list_projects()
     proj_labels = {f"#{p['Id']} · {p['Title']}": p["Id"] for p in projects}
     id_to_label = {v: k for k, v in proj_labels.items()}
+    users = db.list_users(active_only=True)
+    user_labels = {u["DisplayName"]: u["Id"] for u in users}
+    uid_to_label = {v: k for k, v in user_labels.items()}
     pfx = f"ee{event['Id']}_" if is_edit else "ne_"
 
     if pfx + "init" not in st.session_state:
@@ -1500,10 +1606,14 @@ def _event_form(user, event):
         if is_edit:
             sel = [id_to_label[e["Id"]] for e in db.list_event_projects(event["Id"])
                    if e["Id"] in id_to_label]
+            res = [uid_to_label[r["Id"]] for r in db.list_event_resources(event["Id"])
+                   if r["Id"] in uid_to_label]
         else:
             seed = st.session_state.pop("ne_seed_project", None)
             sel = [id_to_label[seed]] if seed in id_to_label else []
+            res = []
         st.session_state[pfx + "projects"] = sel
+        st.session_state[pfx + "resources"] = res
 
     title = st.text_input("Title", key=pfx + "title", max_chars=200)
     c1, c2 = st.columns(2)
@@ -1517,6 +1627,7 @@ def _event_form(user, event):
     multi = t2.checkbox("Multi-day (end date)", key=pfx + "multi")
     end_date = (t2.date_input("End date", key=pfx + "end", label_visibility="collapsed")
                 if multi else None)
+    resourced = st.multiselect("Resource(s) — required", list(user_labels), key=pfx + "resources")
     picked = st.multiselect("Linked projects", list(proj_labels), key=pfx + "projects")
     description = st.text_area("Description", key=pfx + "desc", height=100)
 
@@ -1525,19 +1636,23 @@ def _event_form(user, event):
         if not title.strip():
             st.error("Title is required.")
             return
+        if not resourced:
+            st.error("At least one resource is required.")
+            return
         if multi and end_date and end_date < edate:
             st.error("End date can't be before the start date.")
             return
         pids = [proj_labels[lbl] for lbl in picked]
+        rids = [user_labels[lbl] for lbl in resourced]
         if is_edit:
             db.update_event(event["Id"], title.strip(), edate, etime, end_date if multi else None,
-                            category, description.strip() or None, pids)
+                            category, description.strip() or None, pids, rids)
             db.audit(user["Id"], "update_event", f"#{event['Id']} {title.strip()}")
             st.toast("Event updated.")
         else:
             eid = db.create_event(title.strip(), edate, user["Id"], etime,
                                   end_date if multi else None, category,
-                                  description.strip() or None, pids)
+                                  description.strip() or None, pids, rids)
             db.audit(user["Id"], "create_event", f"#{eid} {title.strip()}")
             st.toast("Event created.")
         for k in [k for k in st.session_state if k.startswith(pfx)]:
@@ -1548,6 +1663,12 @@ def _event_form(user, event):
 @st.dialog("New Event", width="large")
 def new_event_dialog(user):
     _event_form(user, None)
+
+
+def _event_resource_chips(event_id):
+    """Chips naming the resource user(s) assigned to an event."""
+    return "".join(chip(f"👤 {r['DisplayName']}", "#455a64")
+                   for r in db.list_event_resources(event_id))
 
 
 def _render_event_project_links(event):
@@ -1574,6 +1695,9 @@ def _render_event_readonly(event):
     st.markdown(f"{chip(event['Category'], color)} **{html.escape(event['Title'])}**",
                 unsafe_allow_html=True)
     st.caption(f"{when} · added by {event['CreatedByName']}")
+    resources = _event_resource_chips(event["Id"])
+    if resources:
+        st.markdown("**Resource(s):** " + resources, unsafe_allow_html=True)
     if event["Description"]:
         st.markdown(event["Description"])
     _render_event_project_links(event)
@@ -1683,7 +1807,7 @@ def page_calendar(user, config):
             c1.markdown(
                 f"{chip(obj['Category'], color)} <b>{html.escape(obj['Title'])}</b>"
                 f"<p class='issue-meta'>{when} · added by {html.escape(obj['CreatedByName'])}</p>"
-                f"{links}", unsafe_allow_html=True)
+                f"{_event_resource_chips(obj['Id'])}{links}", unsafe_allow_html=True)
             if c2.button("Open", key=f"calev_{obj['Id']}", use_container_width=True):
                 for k in [k for k in st.session_state if k.startswith(f"ee{obj['Id']}_")]:
                     del st.session_state[k]
@@ -1805,7 +1929,8 @@ def page_dashboard(user, config):
                 links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
                                 for l in db.list_event_projects(e["Id"]))
                 u1.markdown(f"{chip(e['Category'], color)} <b>{html.escape(e['Title'])}</b>"
-                            f"<p class='issue-meta'>{when}</p>{links}", unsafe_allow_html=True)
+                            f"<p class='issue-meta'>{when}</p>"
+                            f"{_event_resource_chips(e['Id'])}{links}", unsafe_allow_html=True)
                 if u2.button("Open", key=f"dashev_{e['Id']}", use_container_width=True):
                     st.session_state.open_event_id = e["Id"]
                     st.session_state.page = "Calendar"
@@ -2113,6 +2238,48 @@ def page_admin(user, config):
                     if af_name.strip():
                         db.create_facility(r["Id"], af_name.strip(), af_code.strip() or None)
                         st.rerun()
+
+    def _flat_list(title, caption, list_fn, create_fn, rename_fn, delete_fn, kp, noun):
+        st.subheader(title)
+        st.caption(caption)
+        with st.form(f"add_{kp}", clear_on_submit=True):
+            c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
+            name = c1.text_input(f"New {noun}", label_visibility="collapsed",
+                                 placeholder=f"New {noun}")
+            if c2.form_submit_button("Add", type="primary", use_container_width=True):
+                if name.strip():
+                    try:
+                        create_fn(name.strip())
+                        st.rerun()
+                    except Exception:
+                        st.error("Couldn't add — does that name already exist?")
+        rows = list_fn()
+        if not rows:
+            st.caption(f"None yet — add one above.")
+        for row in rows:
+            c1, c2, c3 = st.columns([4, 1, 1], vertical_alignment="bottom")
+            nm = c1.text_input("Name", value=row["Name"], key=f"{kp}n_{row['Id']}",
+                               label_visibility="collapsed")
+            if c2.button("Rename", key=f"{kp}rn_{row['Id']}", use_container_width=True):
+                if nm.strip():
+                    try:
+                        rename_fn(row["Id"], nm.strip())
+                        st.rerun()
+                    except Exception:
+                        st.error("Couldn't rename — does that name already exist?")
+            if c3.button("Delete", key=f"{kp}del_{row['Id']}", use_container_width=True):
+                delete_fn(row["Id"])
+                db.audit(user["Id"], f"delete_{kp}", row["Name"])
+                st.rerun()
+
+    _flat_list("Internal Teams",
+               "Teams available to tag on projects. Renaming/deleting doesn't change projects "
+               "already tagged.", db.list_teams, db.create_team, db.rename_team, db.delete_team,
+               "team", "team name")
+    _flat_list("Vendors",
+               "Vendors available to tag on projects. Renaming/deleting doesn't change projects "
+               "already tagged.", db.list_vendors, db.create_vendor, db.rename_vendor,
+               db.delete_vendor, "vendor", "vendor name")
 
     st.subheader("Email tools")
     st.caption("Preview the emails or trigger a real send. Test buttons go only to you; "
