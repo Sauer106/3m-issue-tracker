@@ -109,6 +109,8 @@ if (-not $SkipTasks) {
         -Settings  $appSettings | Out-Null
     schtasks /Create /F /TN "IssueTracker Reminders" /SC WEEKLY /D THU /ST 09:00 /RU SYSTEM `
         /TR "`"$python`" `"$AppDir\send_reminders.py`"" | Out-Null
+    schtasks /Create /F /TN "IssueTracker Milestone Reminders" /SC DAILY /ST 08:00 /RU SYSTEM `
+        /TR "`"$python`" `"$AppDir\send_milestone_reminders.py`"" | Out-Null
     schtasks /Create /F /TN "IssueTracker Weekly Digest" /SC WEEKLY /D FRI /ST 07:00 /RU SYSTEM `
         /TR "`"$python`" `"$AppDir\send_digest.py`"" | Out-Null
     schtasks /Create /F /TN "IssueTracker Project Digest" /SC WEEKLY /D FRI /ST 07:05 /RU SYSTEM `
