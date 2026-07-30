@@ -1396,9 +1396,9 @@ def render_diagnostics():
         st.markdown(f"- No backups found in `{BACKUP_DIR}`.")
 
     st.markdown("**Scheduled tasks**")
-    if st.button("Check task status", key="diag_tasks"):
-        st.session_state.diag_tasks = _task_status()
-    for line in st.session_state.get("diag_tasks", []):
+    if st.button("Check task status", key="diag_tasks_btn"):
+        st.session_state.diag_task_status = _task_status()
+    for line in st.session_state.get("diag_task_status", []):
         st.markdown(f"- {line}")
 
 
