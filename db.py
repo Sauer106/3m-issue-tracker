@@ -422,7 +422,60 @@ def purge_project(project_id):
     execute("DELETE FROM Attachments WHERE ParentType = 'project' AND ParentId = ?", (project_id,))
     execute("DELETE FROM ProjectUpdates WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM CalendarEventProjects WHERE ProjectId = ?", (project_id,))
+    execute("DELETE FROM ProjectMilestones WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM Projects WHERE Id = ?", (project_id,))
+
+
+# ---------------------------------------------------------------- project milestones
+
+def list_milestones(project_id):
+    """Milestones for a project: open ones first (soonest date first), then done."""
+    return query(
+        """SELECT * FROM ProjectMilestones WHERE ProjectId = ?
+           ORDER BY Done,
+                    CASE WHEN DueDate IS NULL THEN 1 ELSE 0 END, DueDate, Id""",
+        (project_id,),
+    )
+
+
+def add_milestone(project_id, name, due_date=None):
+    return insert_returning_id(
+        "INSERT INTO ProjectMilestones (ProjectId, Name, DueDate) OUTPUT INSERTED.Id VALUES (?, ?, ?)",
+        (project_id, name, due_date),
+    )
+
+
+def update_milestone(milestone_id, name=None, due_date="__unchanged__", done=None):
+    sets, params = [], []
+    if name is not None:
+        sets.append("Name = ?")
+        params.append(name)
+    if due_date != "__unchanged__":
+        sets.append("DueDate = ?")
+        params.append(due_date)
+    if done is not None:
+        sets.append("Done = ?")
+        params.append(1 if done else 0)
+    if not sets:
+        return
+    params.append(milestone_id)
+    execute(f"UPDATE ProjectMilestones SET {', '.join(sets)} WHERE Id = ?", tuple(params))
+
+
+def delete_milestone(milestone_id):
+    execute("DELETE FROM ProjectMilestones WHERE Id = ?", (milestone_id,))
+
+
+def next_milestones_map():
+    """The next open (incomplete) milestone per project, for the project cards."""
+    rows = query(
+        """SELECT ProjectId, Name, DueDate FROM (
+               SELECT ProjectId, Name, DueDate,
+                      ROW_NUMBER() OVER (PARTITION BY ProjectId
+                        ORDER BY CASE WHEN DueDate IS NULL THEN 1 ELSE 0 END, DueDate, Id) rn
+               FROM ProjectMilestones WHERE Done = 0
+           ) t WHERE rn = 1""")
+    return {r["ProjectId"]: r for r in rows}
 
 
 def list_project_updates(project_id):

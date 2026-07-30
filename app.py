@@ -123,14 +123,25 @@ EVENT_COLORS = {"Go-Live": "#388e3c", "Deadline": "#d32f2f", "Projected Go-Live"
 PROJECT_TARGET_COLOR = "#00796b"
 
 
-def target_chip(project):
-    """A 🎯 chip for a project's target date; red if it's past and still open."""
-    d = project.get("TargetDate")
-    if not d:
+def milestone_chip(m):
+    """Chip for a milestone: green ✓ when done, red when past-due and still open."""
+    if m["Done"]:
+        return chip(f"✓ {m['Name']}", "#388e3c")
+    d = m["DueDate"]
+    label = f"🎯 {m['Name']}" + (f" · {d:%b %d}" if d else "")
+    if d and d < datetime.now().date():
+        return chip(label + " (past)", "#d32f2f")
+    return chip(label, PROJECT_TARGET_COLOR)
+
+
+def next_milestone_chip(m):
+    """Compact chip for a project card: its next open milestone (may be None)."""
+    if not m:
         return ""
-    if project["Status"] not in ("Completed", "Cancelled") and d < datetime.now().date():
-        return chip(f"🎯 Target {d:%b %d} (past)", "#d32f2f")
-    return chip(f"🎯 Target {d:%b %d}", PROJECT_TARGET_COLOR)
+    d = m["DueDate"]
+    label = f"🎯 {m['Name']}" + (f" · {d:%b %d}" if d else "")
+    color = "#d32f2f" if (d and d < datetime.now().date()) else PROJECT_TARGET_COLOR
+    return chip(label, color)
 
 
 AVATAR_COLORS = ["#1976d2", "#7b1fa2", "#388e3c", "#f57c00", "#d32f2f", "#00796b", "#5d4037", "#455a64"]
@@ -665,7 +676,7 @@ def new_project_dialog(user):
     assignee = col1.selectbox("Assign to", ["(Unassigned)"] + list(names))
     solventum = col2.text_input("Solventum Ticket #")
     servicedesk = col3.text_input("ServiceDesk Ticket #")
-    target = st.date_input("Target date (optional)", value=None)
+    st.caption("You can add milestones after creating the project.")
     if st.button("Create Project", type="primary", use_container_width=True):
         if not title.strip() or not summary.strip():
             st.error("Title and summary are required.")
@@ -674,8 +685,7 @@ def new_project_dialog(user):
                                     names.get(assignee), solventum.strip() or None,
                                     servicedesk.strip() or None,
                                     json.dumps(regions) if regions else None,
-                                    json.dumps(facilities) if facilities else None,
-                                    target)
+                                    json.dumps(facilities) if facilities else None)
             if names.get(assignee):
                 notify.notify_assignment(db.get_config(), "project", pid, title.strip(),
                                          db.get_user_by_id(names[assignee]),
@@ -1062,6 +1072,7 @@ def page_projects(user, config):
             st.info("No projects match the current filters.")
             return
 
+        next_ms = db.next_milestones_map()
         for p in projects:
             with st.container(border=True):
                 c1, c2 = st.columns([6, 1], vertical_alignment="center")
@@ -1076,7 +1087,7 @@ def page_projects(user, config):
                     f"#{p['Id']} · {html.escape(p['Title'])}</div>"
                     + chip(p["Status"], STATUS_COLORS.get(p["Status"], NEUTRAL))
                     + tickets
-                    + target_chip(p)
+                    + next_milestone_chip(next_ms.get(p["Id"]))
                     + scope_chips(p)
                     + f"<p class='issue-meta'>assigned to {html.escape(p['AssignedToName'] or 'no one')}"
                     f" · created by {html.escape(p['CreatedByName'])} · last update {last}</p>",
@@ -1128,7 +1139,6 @@ def project_detail(project_id, user):
         tickets += servicedesk_chip(proj["ServiceDeskTicket"])
     st.markdown(
         chip(proj["Status"], STATUS_COLORS.get(proj["Status"], NEUTRAL)) + tickets
-        + target_chip(proj)
         + f"<p class='issue-meta'>Created by {html.escape(proj['CreatedByName'])} on "
         f"{fmt_dt(proj['CreatedAt'])} ({_rel_time(proj['CreatedAt'])}) · assigned to "
         f"{html.escape(proj['AssignedToName'] or 'no one')}</p>",
@@ -1136,6 +1146,42 @@ def project_detail(project_id, user):
     )
     with st.container(border=True):
         st.markdown(proj["Summary"])
+
+    with st.container(border=True):
+        st.markdown("**🎯 Milestones**")
+        milestones = db.list_milestones(project_id)
+        if not milestones:
+            st.caption("No milestones yet.")
+        for m in milestones:
+            if editable:
+                mc1, mc2, mc3 = st.columns([6, 1, 1], vertical_alignment="center")
+                mc1.markdown(milestone_chip(m), unsafe_allow_html=True)
+                if mc2.button("Reopen" if m["Done"] else "Done", key=f"msdone_{m['Id']}",
+                              use_container_width=True):
+                    db.update_milestone(m["Id"], done=not m["Done"])
+                    db.audit(user["Id"], "milestone_toggle",
+                             f"project #{project_id} '{m['Name']}' -> "
+                             f"{'open' if m['Done'] else 'done'}")
+                    st.rerun()
+                if mc3.button("🗑", key=f"msdel_{m['Id']}", use_container_width=True):
+                    db.delete_milestone(m["Id"])
+                    db.audit(user["Id"], "milestone_delete", f"project #{project_id} '{m['Name']}'")
+                    st.rerun()
+            else:
+                st.markdown(milestone_chip(m), unsafe_allow_html=True)
+        if editable:
+            with st.form(f"add_ms_{project_id}", clear_on_submit=True):
+                a1, a2, a3 = st.columns([4, 2, 1], vertical_alignment="bottom")
+                ms_name = a1.text_input("Milestone", placeholder="e.g. UAT complete")
+                ms_date = a2.date_input("Target date (optional)", value=None)
+                if a3.form_submit_button("Add", use_container_width=True):
+                    if ms_name.strip():
+                        db.add_milestone(project_id, ms_name.strip(), ms_date)
+                        db.audit(user["Id"], "milestone_add",
+                                 f"project #{project_id} '{ms_name.strip()}'")
+                        st.rerun()
+                    else:
+                        st.warning("Enter a milestone name.")
 
     with st.container(border=True):
         cc1, cc2 = st.columns([6, 1], vertical_alignment="center")
@@ -1213,17 +1259,12 @@ def project_detail(project_id, user):
         col3, col4 = st.columns(2)
         new_solventum = col3.text_input("Solventum Ticket #", value=proj["SolventumTicket"] or "")
         new_servicedesk = col4.text_input("ServiceDesk Ticket #", value=proj["ServiceDeskTicket"] or "")
-        new_target = st.date_input("Target date (optional)", value=proj.get("TargetDate"))
         if st.form_submit_button("Save Update", type="primary"):
             status_change = None
             if new_status != proj["Status"]:
                 status_change = f"{proj['Status']} -> {new_status}"
             edits = field_edits(proj, names.get(new_assignee), new_assignee,
                                 new_solventum, new_servicedesk, new_regions, new_facilities)
-            if new_target != proj.get("TargetDate"):
-                old_t = proj.get("TargetDate")
-                edits.append({"field": "Target date", "old": f"{old_t}" if old_t else "",
-                              "new": f"{new_target}" if new_target else ""})
             if not comment.strip() and not status_change and not edits:
                 st.error("Enter an update, or change the status/details.")
             else:
@@ -1232,8 +1273,7 @@ def project_detail(project_id, user):
                                       solventum_ticket=new_solventum.strip() or None,
                                       servicedesk_ticket=new_servicedesk.strip() or None,
                                       regions=json.dumps(new_regions) if new_regions else None,
-                                      facilities=json.dumps(new_facilities) if new_facilities else None,
-                                      target_date=new_target)
+                                      facilities=json.dumps(new_facilities) if new_facilities else None)
                 db.add_project_update(project_id, user["Id"], comment.strip(), status_change,
                                       json.dumps(edits) if edits else None)
                 new_aid = names.get(new_assignee)

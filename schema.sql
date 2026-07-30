@@ -369,6 +369,21 @@ BEGIN
 END
 GO
 
+-- Per-project milestones (each with its own target date).
+IF OBJECT_ID('dbo.ProjectMilestones') IS NULL
+BEGIN
+    CREATE TABLE dbo.ProjectMilestones (
+        Id        INT IDENTITY(1,1) PRIMARY KEY,
+        ProjectId INT NOT NULL REFERENCES dbo.Projects(Id),
+        Name      NVARCHAR(200) NOT NULL,
+        DueDate   DATE NULL,
+        Done      BIT NOT NULL DEFAULT 0,
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+    );
+    CREATE INDEX IX_ProjectMilestones_Project ON dbo.ProjectMilestones(ProjectId);
+END
+GO
+
 -- The app and email scripts run as SYSTEM via Task Scheduler; grant it access.
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'NT AUTHORITY\SYSTEM')
     CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
