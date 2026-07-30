@@ -1446,6 +1446,20 @@ def new_event_dialog(user):
     _event_form(user, None)
 
 
+def _render_event_project_links(event):
+    """Buttons to open each project linked to this event (bidirectional nav)."""
+    links = db.list_event_projects(event["Id"])
+    if not links:
+        return
+    st.markdown("**Open a linked project**")
+    for l in links:
+        if st.button(f"🗂️ #{l['Id']} · {l['Title']}", key=f"evproj_{event['Id']}_{l['Id']}",
+                     use_container_width=True):
+            st.session_state.selected_project = l["Id"]
+            st.session_state.page = "Projects"
+            st.rerun()
+
+
 def _render_event_readonly(event):
     color = EVENT_COLORS.get(event["Category"], NEUTRAL)
     when = f"{event['EventDate']:%A, %B %d, %Y}"
@@ -1458,14 +1472,7 @@ def _render_event_readonly(event):
     st.caption(f"{when} · added by {event['CreatedByName']}")
     if event["Description"]:
         st.markdown(event["Description"])
-    links = db.list_event_projects(event["Id"])
-    if links:
-        st.markdown("**Linked projects**")
-        for l in links:
-            if st.button(f"#{l['Id']} · {l['Title']}", key=f"evproj_{event['Id']}_{l['Id']}"):
-                st.session_state.selected_project = l["Id"]
-                st.session_state.page = "Projects"
-                st.rerun()
+    _render_event_project_links(event)
 
 
 @st.dialog("Event", width="large")
@@ -1473,6 +1480,7 @@ def event_detail_dialog(event, user):
     if user["IsAdmin"] or event["CreatedBy"] == user["Id"]:
         _event_form(user, event)
         st.divider()
+        _render_event_project_links(event)
         with st.popover("🗑 Delete event"):
             st.warning("Delete this event permanently? This can't be undone.")
             if st.button("Delete event", type="primary", key=f"delev_{event['Id']}"):
