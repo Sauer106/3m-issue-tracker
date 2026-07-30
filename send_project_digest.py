@@ -6,7 +6,7 @@ issue digest so each reads cleanly on its own.
 Safe to re-run: it skips sending if a project digest already went out since the cutoff.
 """
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import db
 import email_style as es
@@ -14,6 +14,49 @@ import reporting
 from mailer import send_email
 
 ACTIVE_STATUSES = ["Planned", "In Progress", "On Hold"]
+UPCOMING_DAYS = 30
+EVENT_PILL_COLORS = {"Go-Live": "#2e7d32", "Deadline": "#c62828", "Projected Go-Live": "#e65100"}
+TARGET_PILL_COLOR = "#00796b"
+
+
+def upcoming_table(events, targets):
+    """An email-safe table of upcoming calendar events and project target dates."""
+    rows = [(e["EventDate"], e["EventTime"], "event", e) for e in events]
+    rows += [(p["TargetDate"], None, "target", p) for p in targets]
+    if not rows:
+        return ""
+    rows.sort(key=lambda x: (x[0], x[1] or datetime.min.time()))
+    th = (f'padding:8px 10px;font-family:{es.FONT};font-size:11px;color:{es.MUTED};'
+          f'text-transform:uppercase;letter-spacing:.03em;text-align:left;'
+          f'background:#f3f4f6;border-bottom:2px solid {es.BORDER};')
+    body = ""
+    for idx, (d, t, kind, obj) in enumerate(rows):
+        td = (f'padding:9px 10px;font-family:{es.FONT};font-size:13px;color:{es.INK};'
+              f'border-bottom:1px solid {es.BORDER};vertical-align:top;')
+        bg = "#ffffff" if idx % 2 == 0 else "#fafbfc"
+        when = f"{d:%a %b %d}" + (f" {t:%#I:%M %p}" if t else "")
+        if kind == "event":
+            what = es.pill(obj["Category"], EVENT_PILL_COLORS.get(obj["Category"], "#546e7a"))
+            title = es.escape(obj["Title"])
+            if obj["EndDate"] and obj["EndDate"] != d:
+                title += f' <span style="color:{es.MUTED};">(through {obj["EndDate"]:%b %d})</span>'
+            extra = ", ".join(p["Title"] for p in db.list_event_projects(obj["Id"]))
+        else:
+            what = es.pill("Project target", TARGET_PILL_COLOR)
+            title = es.escape(obj["Title"])
+            extra = obj["AssignedToName"] or ""
+        body += (f'<tr style="background:{bg};">'
+                 f'<td style="{td}white-space:nowrap;color:{es.MUTED};">{when}</td>'
+                 f'<td style="{td}white-space:nowrap;">{what}</td>'
+                 f'<td style="{td}font-weight:bold;">{title}</td>'
+                 f'<td style="{td}color:{es.MUTED};">{es.escape(extra)}</td>'
+                 f'</tr>')
+    return (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="border-collapse:collapse;border:1px solid {es.BORDER};">'
+        f'<tr><th style="{th}">When</th><th style="{th}">Type</th><th style="{th}">What</th>'
+        f'<th style="{th}">Projects / owner</th></tr>{body}</table>'
+    )
 
 
 def latest_update_map(project_ids):
@@ -43,7 +86,12 @@ def completed_this_week_ids(week_start):
     return {r["Id"] for r in rows}
 
 
-def build_html(active, new_projects, completed, on_hold, updates, cutoff, week_start, app_url):
+def build_html(active, new_projects, completed, on_hold, updates, upcoming_html,
+               cutoff, week_start, app_url):
+    upcoming_section = ""
+    if upcoming_html:
+        upcoming_section = (es.section_row(f"Upcoming — Next {UPCOMING_DAYS} Days")
+                            + es.table_row(upcoming_html))
     inner = (
         es.tiles_row(
             es.stat_tile(len(active), "Active", "#1565c0"),
@@ -51,6 +99,7 @@ def build_html(active, new_projects, completed, on_hold, updates, cutoff, week_s
             es.stat_tile(len(completed), "Completed this week", "#2e7d32"),
             es.stat_tile(len(on_hold), "On hold", "#e65100" if on_hold else "#9ca3af"),
         )
+        + upcoming_section
         + es.section_row("Active Projects")
         + es.table_row(es.item_table(active, updates))
         + es.section_row("Completed This Week")
@@ -76,7 +125,12 @@ def render(config):
     done_ids = completed_this_week_ids(week_start)
     completed = [p for p in db.list_projects(statuses=["Completed"]) if p["Id"] in done_ids]
     updates = latest_update_map([p["Id"] for p in active + completed])
-    html = build_html(active, new_projects, completed, on_hold, updates, cutoff, week_start, app_url)
+    up_start = cutoff.date()
+    up_end = up_start + timedelta(days=UPCOMING_DAYS)
+    upcoming_html = upcoming_table(db.list_events(up_start, up_end),
+                                   db.list_projects_with_target(up_start, up_end))
+    html = build_html(active, new_projects, completed, on_hold, updates, upcoming_html,
+                      cutoff, week_start, app_url)
     subject = f"3M Weekly Project Digest {cutoff:%B %d, %Y}"
     return subject, html
 

@@ -118,9 +118,8 @@ def due_chip(issue):
 
 
 # Calendar event categories and their colors (also used for the project-target marker).
-EVENT_CATEGORIES = ["Milestone", "Meeting", "Go-Live", "Deadline", "Other"]
-EVENT_COLORS = {"Milestone": "#7b1fa2", "Meeting": "#1976d2", "Go-Live": "#388e3c",
-                "Deadline": "#d32f2f", "Other": "#607d8b"}
+EVENT_CATEGORIES = ["Go-Live", "Deadline", "Projected Go-Live"]
+EVENT_COLORS = {"Go-Live": "#388e3c", "Deadline": "#d32f2f", "Projected Go-Live": "#f57c00"}
 PROJECT_TARGET_COLOR = "#00796b"
 
 
@@ -1339,7 +1338,7 @@ def _event_form(user, event):
         st.session_state[pfx + "title"] = event["Title"] if is_edit else ""
         st.session_state[pfx + "date"] = event["EventDate"] if is_edit else datetime.now().date()
         st.session_state[pfx + "cat"] = (event["Category"] if is_edit and event["Category"]
-                                         in EVENT_CATEGORIES else "Milestone")
+                                         in EVENT_CATEGORIES else "Go-Live")
         st.session_state[pfx + "settime"] = bool(is_edit and event["EventTime"])
         st.session_state[pfx + "time"] = (event["EventTime"] if (is_edit and event["EventTime"])
                                           else datetime.now().time().replace(second=0, microsecond=0))
@@ -1621,6 +1620,48 @@ def page_dashboard(user, config):
         a1, a2 = st.columns(2)
         a1.metric("Avg age of open issues", f"{round(sum(ages) / len(ages))} days")
         a2.metric("Oldest open issue", f"{max(ages)} days")
+
+    st.subheader("Upcoming — next 30 days")
+    up_start = now.date()
+    up_end = up_start + timedelta(days=30)
+    midnight = datetime.min.time()
+    upcoming = [("event", e["EventDate"], e["EventTime"] or midnight, e)
+                for e in db.list_events(up_start, up_end)]
+    upcoming += [("project", p["TargetDate"], midnight, p)
+                 for p in db.list_projects_with_target(up_start, up_end)]
+    upcoming.sort(key=lambda x: (x[1], x[2]))
+    if not upcoming:
+        st.caption("No calendar events or project target dates in the next 30 days.")
+    else:
+        for kind, d, _t, obj in upcoming[:12]:
+            with st.container(border=True):
+                u1, u2 = st.columns([6, 1], vertical_alignment="center")
+                if kind == "event":
+                    color = EVENT_COLORS.get(obj["Category"], NEUTRAL)
+                    when = f"{d:%a %b %d}"
+                    if obj["EventTime"]:
+                        when += f" · {obj['EventTime']:%#I:%M %p}"
+                    links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
+                                    for l in db.list_event_projects(obj["Id"]))
+                    u1.markdown(f"{chip(obj['Category'], color)} <b>{html.escape(obj['Title'])}</b>"
+                                f"<p class='issue-meta'>{when}</p>{links}", unsafe_allow_html=True)
+                    if u2.button("Open", key=f"dashev_{obj['Id']}", use_container_width=True):
+                        st.session_state.open_event_id = obj["Id"]
+                        st.session_state.page = "Calendar"
+                        st.rerun()
+                else:
+                    u1.markdown(
+                        f"{target_chip(obj)} <b>{html.escape(obj['Title'])}</b>"
+                        f"<p class='issue-meta'>Project target · "
+                        f"{chip(obj['Status'], STATUS_COLORS.get(obj['Status'], NEUTRAL))} · "
+                        f"assigned to {html.escape(obj['AssignedToName'] or 'no one')}</p>",
+                        unsafe_allow_html=True)
+                    if u2.button("Open project", key=f"dashtgt_{obj['Id']}", use_container_width=True):
+                        st.session_state.selected_project = obj["Id"]
+                        st.session_state.page = "Projects"
+                        st.rerun()
+        if len(upcoming) > 12:
+            st.caption(f"+{len(upcoming) - 12} more — see the Calendar.")
 
     st.subheader("Issues by status")
     by_status = {}
