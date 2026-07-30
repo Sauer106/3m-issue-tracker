@@ -112,9 +112,10 @@ Click **➕ New Issue** at the top right of the Issues page. A window opens wher
 
 - **Title** and **Description** (both required).
 - **Regions and Facilities** (see that section below).
+- **Have all regions been checked for this issue?** — a required **Yes / No / N/A**. If you pick **No** or **N/A**, briefly explain why. This makes sure region coverage is considered up front.
 - **Assign to** — leave unassigned or pick a person.
 - **Solventum Ticket #** and **ServiceDesk Ticket #** — optional, add them if the issue relates to a vendor or help-desk ticket.
-- **Major issue** — check this if it's a significant, widespread issue (see below).
+- **Major issue** — check this if it's a significant, widespread issue. Checking it opens a short **leadership brief** right here (see [Major issues](#major-issues)): an **Impact** (required) and the **Current action**. The affected regions come from your Regions/Facilities selection.
 - **Due date** — optional target date. Once it passes on an open issue, the card shows a red Overdue badge.
 
 Submit and the issue appears in the list. If you assign it to someone, they get an email letting them know.
@@ -134,7 +135,7 @@ Use the **← All issues** link to go back to the list.
 
 ### Bulk actions
 
-Need to act on several issues at once? Open **Bulk actions** at the top of the Issues page, pick the issues from the list, choose **Close**, **Change status**, or **Reassign**, and click Apply. Each change is recorded on those issues just like a normal update.
+Need to act on several issues at once? Open **Bulk actions** at the top of the Issues page, pick the issues from the list, choose **Change status** or **Reassign**, and click Apply. Each change is recorded on those issues just like a normal update. (Closing isn't a bulk action — every close goes through the region-rollout check below, so you close issues one at a time.)
 
 ### Statuses
 
@@ -144,18 +145,25 @@ Issues move through these:
 - **In Progress** — someone is actively on it.
 - **Waiting on Solventum** — the ball is in Solventum's court. **This status requires a Solventum ticket number.** If you set it without one, the app won't save until you add the ticket #.
 - **Hold** — intentionally paused.
-- **Closed** — done.
+- **Closed** — done. **Closing always asks the region-rollout question** (below).
+
+### Closing an issue — region rollout
+
+Whenever you close **any** issue, the app stops and asks: **is the fix applied across all regions?**
+
+- **Has been** — it's already everywhere.
+- **Will be** — planned; you enter the **date** it will reach the other regions.
+- **No** — you must briefly explain which regions are excluded and why.
+
+Your answer (and the date or reason) goes into the history and onto the issue. This makes sure a fix is either confirmed everywhere, scheduled, or documented where it wasn't.
 
 ### Major issues
 
-Check the **Major** flag for a significant issue that affects many sites. Major issues wear a red badge so they stand out in the list.
+Check the **Major** flag for a significant issue that affects many sites. Major issues wear a red badge so they stand out in the list, and they carry a **leadership brief**.
 
-When you close a major issue, the app stops and asks one question: **was this fix applied to every region?**
-
-- Answer **Yes** and it's recorded.
-- Answer **No** and you must briefly explain which regions were left out and why. That note goes into the history.
-
-This makes sure a widespread fix is either confirmed everywhere or documented where it wasn't.
+- The brief has an **Impact**, the **Current action**, and the **affected regions** (taken automatically from the issue's Regions/Facilities).
+- You can fill it in when you create the issue, or on the issue afterward — the brief is an editable section on every Major issue.
+- Saving the brief notifies leadership — **Matt Obenrader, Carly Auriemma, Giovanna Ferro, and Lauren Hartman**. (Email delivery is being finalized; until then the app shows the notification as queued.)
 
 ### Proposing a fix
 

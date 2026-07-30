@@ -161,6 +161,8 @@ Toggle either off and that person stops getting that email. Below the list, **Ad
 
 The app also sends **immediate notifications** — an assignment email when an issue/project is assigned to someone, a mention email when a user is written as `@username` in a comment, and an **overdue-milestone** email to a project's owner the day one of its milestones slips past its date (once per milestone). Those always go to the affected person, subject to their Reminders setting for the milestone one.
 
+**Major-issue leadership brief.** When a Major issue's brief (Impact / affected regions / current action) is saved, the app notifies a fixed leadership group — **Matt Obenrader, Carly Auriemma, Giovanna Ferro, and Lauren Hartman**. The email content/formatting is being finalized, so for now the app records the notification as *queued* rather than sent; once wiring is complete it becomes a real send. To change the leadership recipients, edit `LEADERSHIP` at the top of `app.py`.
+
 ### Testing and sending on demand
 
 Under **Email tools**:

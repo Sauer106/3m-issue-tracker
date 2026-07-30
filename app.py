@@ -42,7 +42,7 @@ REGIONS = db.get_region_map()
 
 st.set_page_config(page_title="3M Issues & Projects Tracker", page_icon="🎯", layout="wide")
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 REPO_URL = "https://github.com/Sauer106/3m-issue-tracker"
 PY_VERSION = "%d.%d.%d" % sys.version_info[:3]
 ST_VERSION = st.__version__
