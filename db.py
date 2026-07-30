@@ -41,6 +41,34 @@ def get_conn():
     return pyodbc.connect(";".join(parts))
 
 
+def env_diagnostics():
+    """Best-effort environment info for bug reports: the configured and installed
+    ODBC drivers, the pyodbc version, and the SQL Server banner. Never raises —
+    any piece that can't be read comes back as 'unknown'/'unavailable'."""
+    info = {"configured_driver": "unknown", "pyodbc": "unknown",
+            "installed_drivers": [], "sql_server": "unknown"}
+    try:
+        info["configured_driver"] = get_config()["database"].get(
+            "driver", "ODBC Driver 18 for SQL Server")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        info["pyodbc"] = pyodbc.version
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        info["installed_drivers"] = [d for d in pyodbc.drivers() if "SQL Server" in d]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        row = query("SELECT @@VERSION AS v")
+        banner = (row[0]["v"] or "") if row else ""
+        info["sql_server"] = banner.splitlines()[0].strip() if banner else "unknown"
+    except Exception as exc:  # noqa: BLE001
+        info["sql_server"] = f"unavailable ({exc})"
+    return info
+
+
 def query(sql, params=()):
     """Run a SELECT and return a list of dicts."""
     with get_conn() as conn:

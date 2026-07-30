@@ -1792,6 +1792,23 @@ def help_dialog():
             st.markdown(answer)
 
 
+def _env_block():
+    """A best-effort environment summary appended to bug-report emails, so admins
+    can see the stack (Python/Streamlit/pyodbc/ODBC driver/SQL Server) at a glance."""
+    lines = [f"App v{APP_VERSION} &middot; Python {PY_VERSION} &middot; Streamlit {ST_VERSION}"]
+    try:
+        diag = db.env_diagnostics()
+        drivers = ", ".join(diag["installed_drivers"]) or "none detected"
+        lines.append(f"pyodbc {html.escape(str(diag['pyodbc']))} &middot; "
+                     f"configured driver: {html.escape(str(diag['configured_driver']))}")
+        lines.append(f"installed ODBC (SQL Server): {html.escape(drivers)}")
+        lines.append(f"SQL Server: {html.escape(str(diag['sql_server']))}")
+    except Exception as exc:  # noqa: BLE001 - diagnostics must never break the report
+        lines.append(f"(environment details unavailable: {html.escape(str(exc))})")
+    return ('<span style="color:#6b7280;font-size:12px;line-height:1.5;">'
+            f'<b>Environment</b><br>{"<br>".join(lines)}</span>')
+
+
 def _submit_bug_report(user, where, what, steps):
     """Email active administrators the bug report and record it in the audit log.
     Best-effort: returns True if the email was sent, False if it was only logged."""
@@ -1809,11 +1826,11 @@ def _submit_bug_report(user, where, what, steps):
     reporter = f"{user['DisplayName']} ({user.get('Email') or 'no email on file'})"
     what_html = html.escape(what).replace("\n", "<br>")
     body = (f"<b>Reporter:</b> {html.escape(reporter)}<br>"
-            f"<b>Where:</b> {html.escape(where)}<br>"
-            f"<b>Version:</b> v{APP_VERSION}<br><br>"
+            f"<b>Where:</b> {html.escape(where)}<br><br>"
             f"<b>What happened</b><br>{what_html}")
     if steps:
         body += f"<br><br><b>Steps to reproduce</b><br>{html.escape(steps).replace(chr(10), '<br>')}"
+    body += "<br><br>" + _env_block()
     inner = es.intro_row(body)
     app_url = config["app"].get("app_url", "")
     subject = f"3M Tracker bug report — {where}"
