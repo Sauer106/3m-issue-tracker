@@ -335,6 +335,40 @@ IF COL_LENGTH('dbo.Users', 'LockedUntil') IS NULL
     ALTER TABLE dbo.Users ADD LockedUntil DATETIME2 NULL;
 GO
 
+-- Upgrade: per-project target date (plotted on the Calendar page).
+IF COL_LENGTH('dbo.Projects', 'TargetDate') IS NULL
+    ALTER TABLE dbo.Projects ADD TargetDate DATE NULL;
+GO
+
+-- Calendar events, each optionally linked to one or more Projects.
+IF OBJECT_ID('dbo.CalendarEvents') IS NULL
+BEGIN
+    CREATE TABLE dbo.CalendarEvents (
+        Id          INT IDENTITY(1,1) PRIMARY KEY,
+        Title       NVARCHAR(200) NOT NULL,
+        EventDate   DATE NOT NULL,
+        EventTime   TIME NULL,            -- optional start time
+        EndDate     DATE NULL,            -- optional multi-day end (inclusive)
+        Category    NVARCHAR(30) NOT NULL DEFAULT 'Other',  -- Milestone / Meeting / Go-Live / Deadline / Other
+        Description NVARCHAR(MAX) NULL,
+        CreatedBy   INT NOT NULL REFERENCES dbo.Users(Id),
+        CreatedAt   DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+        UpdatedAt   DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+    );
+    CREATE INDEX IX_CalendarEvents_Date ON dbo.CalendarEvents(EventDate);
+END
+GO
+
+IF OBJECT_ID('dbo.CalendarEventProjects') IS NULL
+BEGIN
+    CREATE TABLE dbo.CalendarEventProjects (
+        EventId   INT NOT NULL REFERENCES dbo.CalendarEvents(Id) ON DELETE CASCADE,
+        ProjectId INT NOT NULL REFERENCES dbo.Projects(Id),
+        CONSTRAINT PK_CalendarEventProjects PRIMARY KEY (EventId, ProjectId)
+    );
+END
+GO
+
 -- The app and email scripts run as SYSTEM via Task Scheduler; grant it access.
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'NT AUTHORITY\SYSTEM')
     CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
@@ -381,7 +415,7 @@ GO
 CREATE OR ALTER VIEW dbo.vw_ProjectsFlat AS
 SELECT p.Id, p.Title, p.Status, p.SolventumTicket, p.ServiceDeskTicket,
        c.DisplayName AS CreatedBy, a.DisplayName AS AssignedTo,
-       p.CreatedAt, p.UpdatedAt
+       p.TargetDate, p.CreatedAt, p.UpdatedAt
 FROM Projects p
 JOIN Users c ON c.Id = p.CreatedBy
 LEFT JOIN Users a ON a.Id = p.AssignedTo

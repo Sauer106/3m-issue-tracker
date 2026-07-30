@@ -353,23 +353,28 @@ def get_project(project_id):
 
 
 def create_project(title, summary, created_by, assigned_to=None,
-                   solventum_ticket=None, servicedesk_ticket=None, regions=None, facilities=None):
+                   solventum_ticket=None, servicedesk_ticket=None, regions=None, facilities=None,
+                   target_date=None):
     return insert_returning_id(
         """INSERT INTO Projects (Title, Summary, CreatedBy, AssignedTo, SolventumTicket,
-                                 ServiceDeskTicket, Regions, Facilities)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 ServiceDeskTicket, Regions, Facilities, TargetDate)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (title, summary, created_by, assigned_to, solventum_ticket, servicedesk_ticket,
-         regions, facilities),
+         regions, facilities, target_date),
     )
 
 
 def set_project_fields(project_id, status=None, assigned_to="__unchanged__",
                        solventum_ticket="__unchanged__", servicedesk_ticket="__unchanged__",
-                       regions="__unchanged__", facilities="__unchanged__"):
+                       regions="__unchanged__", facilities="__unchanged__",
+                       target_date="__unchanged__"):
     sets, params = ["UpdatedAt = SYSDATETIME()"], []
     if status is not None:
         sets.append("Status = ?")
         params.append(status)
+    if target_date != "__unchanged__":
+        sets.append("TargetDate = ?")
+        params.append(target_date)
     if assigned_to != "__unchanged__":
         sets.append("AssignedTo = ?")
         params.append(assigned_to)
@@ -416,6 +421,7 @@ def purge_project(project_id):
     """Permanent hard delete from the recycle bin, including updates and attachments."""
     execute("DELETE FROM Attachments WHERE ParentType = 'project' AND ParentId = ?", (project_id,))
     execute("DELETE FROM ProjectUpdates WHERE ProjectId = ?", (project_id,))
+    execute("DELETE FROM CalendarEventProjects WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM Projects WHERE Id = ?", (project_id,))
 
 
@@ -425,6 +431,95 @@ def list_project_updates(project_id):
            FROM ProjectUpdates u JOIN Users usr ON usr.Id = u.AuthorId
            WHERE u.ProjectId = ? ORDER BY u.CreatedAt DESC""",
         (project_id,),
+    )
+
+
+# ---------------------------------------------------------------- calendar
+
+def create_event(title, event_date, created_by, event_time=None, end_date=None,
+                 category="Other", description=None, project_ids=None):
+    event_id = insert_returning_id(
+        """INSERT INTO CalendarEvents (Title, EventDate, EventTime, EndDate, Category,
+                                       Description, CreatedBy)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (title, event_date, event_time, end_date, category, description, created_by),
+    )
+    set_event_projects(event_id, project_ids or [])
+    return event_id
+
+
+def update_event(event_id, title, event_date, event_time=None, end_date=None,
+                 category="Other", description=None, project_ids=None):
+    execute(
+        """UPDATE CalendarEvents SET Title = ?, EventDate = ?, EventTime = ?, EndDate = ?,
+                  Category = ?, Description = ?, UpdatedAt = SYSDATETIME() WHERE Id = ?""",
+        (title, event_date, event_time, end_date, category, description, event_id),
+    )
+    if project_ids is not None:
+        set_event_projects(event_id, project_ids)
+
+
+def delete_event(event_id):
+    """Hard delete; the link rows go via ON DELETE CASCADE."""
+    execute("DELETE FROM CalendarEvents WHERE Id = ?", (event_id,))
+
+
+def set_event_projects(event_id, project_ids):
+    """Replace the set of Projects linked to an event."""
+    execute("DELETE FROM CalendarEventProjects WHERE EventId = ?", (event_id,))
+    for pid in dict.fromkeys(project_ids):  # de-dup, keep order
+        execute("INSERT INTO CalendarEventProjects (EventId, ProjectId) VALUES (?, ?)",
+                (event_id, pid))
+
+
+EVENT_SELECT = """
+SELECT e.*, u.DisplayName AS CreatedByName
+FROM CalendarEvents e JOIN Users u ON u.Id = e.CreatedBy
+"""
+
+
+def get_event(event_id):
+    rows = query(EVENT_SELECT + " WHERE e.Id = ?", (event_id,))
+    return rows[0] if rows else None
+
+
+def list_events(start_date, end_date):
+    """Events that touch the [start_date, end_date] window (inclusive), accounting
+    for optional multi-day spans (EndDate)."""
+    return query(
+        EVENT_SELECT + """ WHERE e.EventDate <= ?
+              AND COALESCE(e.EndDate, e.EventDate) >= ?
+           ORDER BY e.EventDate, e.EventTime""",
+        (end_date, start_date),
+    )
+
+
+def list_event_projects(event_id):
+    return query(
+        """SELECT p.Id, p.Title, p.Status FROM CalendarEventProjects ep
+           JOIN Projects p ON p.Id = ep.ProjectId
+           WHERE ep.EventId = ? AND p.DeletedAt IS NULL
+           ORDER BY p.Title""",
+        (event_id,),
+    )
+
+
+def list_events_for_project(project_id):
+    return query(
+        EVENT_SELECT + """ JOIN CalendarEventProjects ep ON ep.EventId = e.Id
+           WHERE ep.ProjectId = ? ORDER BY e.EventDate, e.EventTime""",
+        (project_id,),
+    )
+
+
+def list_projects_with_target(start_date, end_date):
+    """Non-deleted projects whose TargetDate falls in [start_date, end_date]."""
+    return query(
+        """SELECT p.Id, p.Title, p.Status, p.TargetDate, a.DisplayName AS AssignedToName
+           FROM Projects p LEFT JOIN Users a ON a.Id = p.AssignedTo
+           WHERE p.DeletedAt IS NULL AND p.TargetDate BETWEEN ? AND ?
+           ORDER BY p.TargetDate, p.Title""",
+        (start_date, end_date),
     )
 
 

@@ -2,6 +2,7 @@
 
 Run with:  streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 """
+import calendar
 import csv
 import glob
 import html
@@ -114,6 +115,23 @@ def due_chip(issue):
     if is_overdue(issue):
         return chip(f"⏰ Overdue {d:%b %d}", "#d32f2f")
     return chip(f"Due {d:%b %d}", "#607d8b")
+
+
+# Calendar event categories and their colors (also used for the project-target marker).
+EVENT_CATEGORIES = ["Milestone", "Meeting", "Go-Live", "Deadline", "Other"]
+EVENT_COLORS = {"Milestone": "#7b1fa2", "Meeting": "#1976d2", "Go-Live": "#388e3c",
+                "Deadline": "#d32f2f", "Other": "#607d8b"}
+PROJECT_TARGET_COLOR = "#00796b"
+
+
+def target_chip(project):
+    """A 🎯 chip for a project's target date; red if it's past and still open."""
+    d = project.get("TargetDate")
+    if not d:
+        return ""
+    if project["Status"] not in ("Completed", "Cancelled") and d < datetime.now().date():
+        return chip(f"🎯 Target {d:%b %d} (past)", "#d32f2f")
+    return chip(f"🎯 Target {d:%b %d}", PROJECT_TARGET_COLOR)
 
 
 AVATAR_COLORS = ["#1976d2", "#7b1fa2", "#388e3c", "#f57c00", "#d32f2f", "#00796b", "#5d4037", "#455a64"]
@@ -648,6 +666,7 @@ def new_project_dialog(user):
     assignee = col1.selectbox("Assign to", ["(Unassigned)"] + list(names))
     solventum = col2.text_input("Solventum Ticket #")
     servicedesk = col3.text_input("ServiceDesk Ticket #")
+    target = st.date_input("Target date (optional)", value=None)
     if st.button("Create Project", type="primary", use_container_width=True):
         if not title.strip() or not summary.strip():
             st.error("Title and summary are required.")
@@ -656,7 +675,8 @@ def new_project_dialog(user):
                                     names.get(assignee), solventum.strip() or None,
                                     servicedesk.strip() or None,
                                     json.dumps(regions) if regions else None,
-                                    json.dumps(facilities) if facilities else None)
+                                    json.dumps(facilities) if facilities else None,
+                                    target)
             if names.get(assignee):
                 notify.notify_assignment(db.get_config(), "project", pid, title.strip(),
                                          db.get_user_by_id(names[assignee]),
@@ -1057,6 +1077,7 @@ def page_projects(user, config):
                     f"#{p['Id']} · {html.escape(p['Title'])}</div>"
                     + chip(p["Status"], STATUS_COLORS.get(p["Status"], NEUTRAL))
                     + tickets
+                    + target_chip(p)
                     + scope_chips(p)
                     + f"<p class='issue-meta'>assigned to {html.escape(p['AssignedToName'] or 'no one')}"
                     f" · created by {html.escape(p['CreatedByName'])} · last update {last}</p>",
@@ -1108,6 +1129,7 @@ def project_detail(project_id, user):
         tickets += servicedesk_chip(proj["ServiceDeskTicket"])
     st.markdown(
         chip(proj["Status"], STATUS_COLORS.get(proj["Status"], NEUTRAL)) + tickets
+        + target_chip(proj)
         + f"<p class='issue-meta'>Created by {html.escape(proj['CreatedByName'])} on "
         f"{fmt_dt(proj['CreatedAt'])} ({_rel_time(proj['CreatedAt'])}) · assigned to "
         f"{html.escape(proj['AssignedToName'] or 'no one')}</p>",
@@ -1115,6 +1137,32 @@ def project_detail(project_id, user):
     )
     with st.container(border=True):
         st.markdown(proj["Summary"])
+
+    with st.container(border=True):
+        cc1, cc2 = st.columns([6, 1], vertical_alignment="center")
+        cc1.markdown("**📅 Calendar**")
+        if editable and cc2.button("➕ Add", key=f"addcal_{project_id}", use_container_width=True):
+            for k in [k for k in st.session_state if k.startswith("ne_")]:
+                del st.session_state[k]
+            st.session_state.ne_seed_project = project_id
+            new_event_dialog(user)
+        events = db.list_events_for_project(project_id)
+        if not events:
+            st.caption("No calendar events linked to this project yet.")
+        for e in events:
+            color = EVENT_COLORS.get(e["Category"], NEUTRAL)
+            when = f"{e['EventDate']:%b %d, %Y}"
+            if e["EventTime"]:
+                when += f" · {e['EventTime']:%#I:%M %p}"
+            if e["EndDate"] and e["EndDate"] != e["EventDate"]:
+                when += f" → {e['EndDate']:%b %d}"
+            ec1, ec2 = st.columns([6, 1], vertical_alignment="center")
+            ec1.markdown(f"{chip(e['Category'], color)} {html.escape(e['Title'])}"
+                         f"<p class='issue-meta'>{when}</p>", unsafe_allow_html=True)
+            if ec2.button("Open", key=f"pcalev_{e['Id']}", use_container_width=True):
+                st.session_state.open_event_id = e["Id"]
+                st.session_state.page = "Calendar"
+                st.rerun()
 
     render_attachments("project", project_id, user,
                        lambda fc: db.add_project_update(project_id, user["Id"], "", field_changes=fc),
@@ -1166,12 +1214,17 @@ def project_detail(project_id, user):
         col3, col4 = st.columns(2)
         new_solventum = col3.text_input("Solventum Ticket #", value=proj["SolventumTicket"] or "")
         new_servicedesk = col4.text_input("ServiceDesk Ticket #", value=proj["ServiceDeskTicket"] or "")
+        new_target = st.date_input("Target date (optional)", value=proj.get("TargetDate"))
         if st.form_submit_button("Save Update", type="primary"):
             status_change = None
             if new_status != proj["Status"]:
                 status_change = f"{proj['Status']} -> {new_status}"
             edits = field_edits(proj, names.get(new_assignee), new_assignee,
                                 new_solventum, new_servicedesk, new_regions, new_facilities)
+            if new_target != proj.get("TargetDate"):
+                old_t = proj.get("TargetDate")
+                edits.append({"field": "Target date", "old": f"{old_t}" if old_t else "",
+                              "new": f"{new_target}" if new_target else ""})
             if not comment.strip() and not status_change and not edits:
                 st.error("Enter an update, or change the status/details.")
             else:
@@ -1180,7 +1233,8 @@ def project_detail(project_id, user):
                                       solventum_ticket=new_solventum.strip() or None,
                                       servicedesk_ticket=new_servicedesk.strip() or None,
                                       regions=json.dumps(new_regions) if new_regions else None,
-                                      facilities=json.dumps(new_facilities) if new_facilities else None)
+                                      facilities=json.dumps(new_facilities) if new_facilities else None,
+                                      target_date=new_target)
                 db.add_project_update(project_id, user["Id"], comment.strip(), status_change,
                                       json.dumps(edits) if edits else None)
                 new_aid = names.get(new_assignee)
@@ -1210,6 +1264,286 @@ def project_detail(project_id, user):
                        can_delete=lambda u: user["IsAdmin"] or u["AuthorId"] == user["Id"])
 
     live_history()
+
+
+# ---------------------------------------------------------------- calendar
+
+_CAL_CSS = """
+<style>
+.cal { width:100%; border-collapse:collapse; table-layout:fixed; margin-top:0.4rem; }
+.cal-th { padding:6px 6px; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em;
+          color:rgba(128,128,128,0.9); border-bottom:2px solid rgba(128,128,128,0.25); text-align:left; }
+.cal-cell { height:6.4rem; width:14.28%; vertical-align:top; border:1px solid rgba(128,128,128,0.18);
+            padding:3px 4px; overflow:hidden; }
+.cal-dim { background:rgba(128,128,128,0.06); }
+.cal-dim .cal-daynum { opacity:0.4; }
+.cal-today { outline:2px solid #ff4b4b; outline-offset:-2px; }
+.cal-daynum { font-size:0.78rem; font-weight:600; margin-bottom:2px; color:rgba(128,128,128,0.95); }
+.cal-ev { font-size:0.7rem; line-height:1.25; padding:1px 5px; margin-bottom:2px; border-radius:3px;
+          background:rgba(128,128,128,0.10); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cal-more { font-size:0.66rem; color:rgba(128,128,128,0.8); padding-left:2px; }
+.cal-legend { margin:0.6rem 0 0.2rem; font-size:0.78rem; color:rgba(128,128,128,0.9); }
+.cal-leg { margin-right:1rem; white-space:nowrap; }
+.cal-dot { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px;
+           vertical-align:middle; }
+</style>
+"""
+
+
+def _cal_chip(color, text):
+    return (f"<div class='cal-ev' style='border-left:3px solid {color};'>"
+            f"{html.escape(text)}</div>")
+
+
+def _calendar_grid(year, month, items_by_day, today):
+    cal = calendar.Calendar(firstweekday=6)  # Sunday first (US)
+    head = "".join(f"<th class='cal-th'>{d}</th>"
+                   for d in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
+    body = ""
+    for week in cal.monthdatescalendar(year, month):
+        cells = ""
+        for day in week:
+            cls = "cal-cell"
+            if day.month != month:
+                cls += " cal-dim"
+            if day == today:
+                cls += " cal-today"
+            items = sorted(items_by_day.get(day, []), key=lambda x: x["sort"])
+            chips = "".join(it["chip"] for it in items[:4])
+            if len(items) > 4:
+                chips += f"<div class='cal-more'>+{len(items) - 4} more</div>"
+            cells += f"<td class='{cls}'><div class='cal-daynum'>{day.day}</div>{chips}</td>"
+        body += f"<tr>{cells}</tr>"
+    return f"<table class='cal'><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
+def _cal_legend():
+    parts = [f"<span class='cal-leg'><span class='cal-dot' style='background:{c}'></span>{k}</span>"
+             for k, c in EVENT_COLORS.items()]
+    parts.append(f"<span class='cal-leg'><span class='cal-dot' style='background:{PROJECT_TARGET_COLOR}'>"
+                 f"</span>🎯 Project target</span>")
+    return "<div class='cal-legend'>" + " ".join(parts) + "</div>"
+
+
+def _event_form(user, event):
+    """Shared create/edit form. `event` is None for a new event. Keyed widgets so
+    picks survive Streamlit reruns; state clears on save."""
+    is_edit = event is not None
+    projects = db.list_projects()
+    proj_labels = {f"#{p['Id']} · {p['Title']}": p["Id"] for p in projects}
+    id_to_label = {v: k for k, v in proj_labels.items()}
+    pfx = f"ee{event['Id']}_" if is_edit else "ne_"
+
+    if pfx + "init" not in st.session_state:
+        st.session_state[pfx + "init"] = True
+        st.session_state[pfx + "title"] = event["Title"] if is_edit else ""
+        st.session_state[pfx + "date"] = event["EventDate"] if is_edit else datetime.now().date()
+        st.session_state[pfx + "cat"] = (event["Category"] if is_edit and event["Category"]
+                                         in EVENT_CATEGORIES else "Milestone")
+        st.session_state[pfx + "settime"] = bool(is_edit and event["EventTime"])
+        st.session_state[pfx + "time"] = (event["EventTime"] if (is_edit and event["EventTime"])
+                                          else datetime.now().time().replace(second=0, microsecond=0))
+        st.session_state[pfx + "multi"] = bool(is_edit and event["EndDate"])
+        st.session_state[pfx + "end"] = (event["EndDate"] if (is_edit and event["EndDate"])
+                                         else st.session_state[pfx + "date"])
+        st.session_state[pfx + "desc"] = (event["Description"] if is_edit and event["Description"] else "")
+        if is_edit:
+            sel = [id_to_label[e["Id"]] for e in db.list_event_projects(event["Id"])
+                   if e["Id"] in id_to_label]
+        else:
+            seed = st.session_state.pop("ne_seed_project", None)
+            sel = [id_to_label[seed]] if seed in id_to_label else []
+        st.session_state[pfx + "projects"] = sel
+
+    title = st.text_input("Title", key=pfx + "title", max_chars=200)
+    c1, c2 = st.columns(2)
+    edate = c1.date_input("Date", key=pfx + "date")
+    c2.selectbox("Category", EVENT_CATEGORIES, key=pfx + "cat")
+    category = st.session_state[pfx + "cat"]
+    t1, t2 = st.columns(2)
+    set_time = t1.checkbox("Set a start time", key=pfx + "settime")
+    etime = (t1.time_input("Start time", key=pfx + "time", label_visibility="collapsed")
+             if set_time else None)
+    multi = t2.checkbox("Multi-day (end date)", key=pfx + "multi")
+    end_date = (t2.date_input("End date", key=pfx + "end", label_visibility="collapsed")
+                if multi else None)
+    picked = st.multiselect("Linked projects", list(proj_labels), key=pfx + "projects")
+    description = st.text_area("Description", key=pfx + "desc", height=100)
+
+    if st.button("Save changes" if is_edit else "Create event", type="primary",
+                 use_container_width=True):
+        if not title.strip():
+            st.error("Title is required.")
+            return
+        if multi and end_date and end_date < edate:
+            st.error("End date can't be before the start date.")
+            return
+        pids = [proj_labels[lbl] for lbl in picked]
+        if is_edit:
+            db.update_event(event["Id"], title.strip(), edate, etime, end_date if multi else None,
+                            category, description.strip() or None, pids)
+            db.audit(user["Id"], "update_event", f"#{event['Id']} {title.strip()}")
+            st.toast("Event updated.")
+        else:
+            eid = db.create_event(title.strip(), edate, user["Id"], etime,
+                                  end_date if multi else None, category,
+                                  description.strip() or None, pids)
+            db.audit(user["Id"], "create_event", f"#{eid} {title.strip()}")
+            st.toast("Event created.")
+        for k in [k for k in st.session_state if k.startswith(pfx)]:
+            del st.session_state[k]
+        st.rerun()
+
+
+@st.dialog("New Event", width="large")
+def new_event_dialog(user):
+    _event_form(user, None)
+
+
+def _render_event_readonly(event):
+    color = EVENT_COLORS.get(event["Category"], NEUTRAL)
+    when = f"{event['EventDate']:%A, %B %d, %Y}"
+    if event["EventTime"]:
+        when += f" at {event['EventTime']:%#I:%M %p}"
+    if event["EndDate"] and event["EndDate"] != event["EventDate"]:
+        when += f" → {event['EndDate']:%B %d, %Y}"
+    st.markdown(f"{chip(event['Category'], color)} **{html.escape(event['Title'])}**",
+                unsafe_allow_html=True)
+    st.caption(f"{when} · added by {event['CreatedByName']}")
+    if event["Description"]:
+        st.markdown(event["Description"])
+    links = db.list_event_projects(event["Id"])
+    if links:
+        st.markdown("**Linked projects**")
+        for l in links:
+            if st.button(f"#{l['Id']} · {l['Title']}", key=f"evproj_{event['Id']}_{l['Id']}"):
+                st.session_state.selected_project = l["Id"]
+                st.session_state.page = "Projects"
+                st.rerun()
+
+
+@st.dialog("Event", width="large")
+def event_detail_dialog(event, user):
+    if user["IsAdmin"] or event["CreatedBy"] == user["Id"]:
+        _event_form(user, event)
+        st.divider()
+        with st.popover("🗑 Delete event"):
+            st.warning("Delete this event permanently? This can't be undone.")
+            if st.button("Delete event", type="primary", key=f"delev_{event['Id']}"):
+                db.delete_event(event["Id"])
+                db.audit(user["Id"], "delete_event", f"#{event['Id']} {event['Title']}")
+                for k in [k for k in st.session_state if k.startswith(f"ee{event['Id']}_")]:
+                    del st.session_state[k]
+                st.toast("Event deleted.")
+                st.rerun()
+    else:
+        _render_event_readonly(event)
+
+
+def page_calendar(user, config):
+    pending = st.session_state.pop("open_event_id", None)
+    if pending:
+        for k in [k for k in st.session_state if k.startswith(f"ee{pending}_")]:
+            del st.session_state[k]
+        ev = db.get_event(pending)
+        if ev:
+            event_detail_dialog(ev, user)
+
+    today = datetime.now().date()
+    if "cal_year" not in st.session_state:
+        st.session_state.cal_year, st.session_state.cal_month = today.year, today.month
+    year, month = st.session_state.cal_year, st.session_state.cal_month
+
+    h1, h2 = st.columns([6, 1], vertical_alignment="center")
+    h1.header("Calendar")
+    if h2.button("➕ New Event", type="primary", use_container_width=True):
+        for k in [k for k in st.session_state if k.startswith("ne_")]:
+            del st.session_state[k]
+        new_event_dialog(user)
+
+    nav1, nav2, nav3, nav4 = st.columns([1, 1, 4, 1], vertical_alignment="center")
+    if nav1.button("◀ Prev", use_container_width=True):
+        st.session_state.cal_year, st.session_state.cal_month = (
+            (year, month - 1) if month > 1 else (year - 1, 12))
+        st.rerun()
+    if nav2.button("Today", use_container_width=True):
+        st.session_state.cal_year, st.session_state.cal_month = today.year, today.month
+        st.rerun()
+    if nav4.button("Next ▶", use_container_width=True):
+        st.session_state.cal_year, st.session_state.cal_month = (
+            (year, month + 1) if month < 12 else (year + 1, 1))
+        st.rerun()
+    nav3.markdown(f"<div style='text-align:center; font-size:1.15rem; font-weight:600;'>"
+                  f"{calendar.month_name[month]} {year}</div>", unsafe_allow_html=True)
+
+    cal = calendar.Calendar(firstweekday=6)
+    weeks = cal.monthdatescalendar(year, month)
+    grid_start, grid_end = weeks[0][0], weeks[-1][-1]
+    midnight = datetime.min.time()
+
+    items_by_day = {}
+    for e in db.list_events(grid_start, grid_end):
+        color = EVENT_COLORS.get(e["Category"], NEUTRAL)
+        label = (f"{e['EventTime']:%#I:%M %p} " if e["EventTime"] else "") + e["Title"]
+        end = e["EndDate"] or e["EventDate"]
+        d = max(e["EventDate"], grid_start)
+        while d <= min(end, grid_end):
+            items_by_day.setdefault(d, []).append(
+                {"sort": (d, e["EventTime"] or midnight), "chip": _cal_chip(color, label)})
+            d += timedelta(days=1)
+    for p in db.list_projects_with_target(grid_start, grid_end):
+        items_by_day.setdefault(p["TargetDate"], []).append(
+            {"sort": (p["TargetDate"], midnight),
+             "chip": _cal_chip(PROJECT_TARGET_COLOR, f"🎯 {p['Title']}")})
+
+    st.markdown(_CAL_CSS + _calendar_grid(year, month, items_by_day, today), unsafe_allow_html=True)
+    st.markdown(_cal_legend(), unsafe_allow_html=True)
+
+    st.subheader(f"Agenda — {calendar.month_name[month]} {year}")
+    m_start = datetime(year, month, 1).date()
+    m_end = datetime(year, month, calendar.monthrange(year, month)[1]).date()
+    agenda = [("event", e["EventDate"], e["EventTime"] or midnight, e)
+              for e in db.list_events(m_start, m_end)]
+    agenda += [("project", p["TargetDate"], midnight, p)
+               for p in db.list_projects_with_target(m_start, m_end)]
+    agenda.sort(key=lambda x: (x[1], x[2]))
+
+    if not agenda:
+        st.info("Nothing scheduled this month. Use **New Event**, or set a **Target date** "
+                "on a project.")
+        return
+
+    for kind, d, _t, obj in agenda:
+        with st.container(border=True):
+            c1, c2 = st.columns([6, 1], vertical_alignment="center")
+            if kind == "event":
+                color = EVENT_COLORS.get(obj["Category"], NEUTRAL)
+                when = f"{d:%a %b %d}"
+                if obj["EventTime"]:
+                    when += f" · {obj['EventTime']:%#I:%M %p}"
+                if obj["EndDate"] and obj["EndDate"] != d:
+                    when += f" → {obj['EndDate']:%b %d}"
+                links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
+                                for l in db.list_event_projects(obj["Id"]))
+                c1.markdown(
+                    f"{chip(obj['Category'], color)} <b>{html.escape(obj['Title'])}</b>"
+                    f"<p class='issue-meta'>{when} · added by {html.escape(obj['CreatedByName'])}</p>"
+                    f"{links}", unsafe_allow_html=True)
+                if c2.button("Open", key=f"calev_{obj['Id']}", use_container_width=True):
+                    for k in [k for k in st.session_state if k.startswith(f"ee{obj['Id']}_")]:
+                        del st.session_state[k]
+                    event_detail_dialog(obj, user)
+            else:
+                c1.markdown(
+                    f"{target_chip(obj)} <b>{html.escape(obj['Title'])}</b>"
+                    f"<p class='issue-meta'>Project target · "
+                    f"{chip(obj['Status'], STATUS_COLORS.get(obj['Status'], NEUTRAL))} · "
+                    f"assigned to {html.escape(obj['AssignedToName'] or 'no one')}</p>",
+                    unsafe_allow_html=True)
+                if c2.button("Open project", key=f"caltgt_{obj['Id']}", use_container_width=True):
+                    st.session_state.selected_project = obj["Id"]
+                    st.session_state.page = "Projects"
+                    st.rerun()
 
 
 # ---------------------------------------------------------------- dashboard
@@ -1796,10 +2130,10 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
-    pages = ["Issues", "Projects", "Dashboard"]
+    pages = ["Issues", "Projects", "Calendar", "Dashboard"]
     if user["IsAdmin"]:
         pages.append("Admin")
-    icons = {"Issues": "📋", "Projects": "🗂️", "Dashboard": "📊", "Admin": "⚙️"}
+    icons = {"Issues": "📋", "Projects": "🗂️", "Calendar": "📅", "Dashboard": "📊", "Admin": "⚙️"}
 
     # Deep links from the emails: ?page=Issues|Projects, and ?mine=1 to open the
     # Issues list already filtered to the current user's items. Apply once.
@@ -1819,6 +2153,9 @@ def main():
         if (qp.get("project") or "").isdigit():
             st.session_state.selected_project = int(qp["project"])
             st.session_state.page = "Projects"
+        if (qp.get("event") or "").isdigit():
+            st.session_state.open_event_id = int(qp["event"])
+            st.session_state.page = "Calendar"
 
     if st.session_state.get("page") not in pages:
         st.session_state.page = pages[0]
@@ -1846,6 +2183,8 @@ def main():
         page_issues(user, config)
     elif page == "Projects":
         page_projects(user, config)
+    elif page == "Calendar":
+        page_calendar(user, config)
     elif page == "Dashboard":
         page_dashboard(user, config)
     elif page == "Admin":
