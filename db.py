@@ -225,14 +225,16 @@ def get_issue(issue_id):
 
 def create_issue(title, description, reported_by, assigned_to=None,
                  solventum_ticket=None, servicedesk_ticket=None, regions=None, facilities=None,
-                 is_major=False, due_date=None, regions_checked=None):
+                 is_major=False, due_date=None, regions_checked=None, regions_checked_reason=None,
+                 impact=None, current_action=None):
     return insert_returning_id(
         """INSERT INTO Issues (Title, Description, ReportedBy, AssignedTo, SolventumTicket,
                                ServiceDeskTicket, Regions, Facilities, IsMajor, DueDate,
-                               RegionsChecked)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                               RegionsChecked, RegionsCheckedReason, Impact, CurrentAction)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (title, description, reported_by, assigned_to, solventum_ticket, servicedesk_ticket,
-         regions, facilities, 1 if is_major else 0, due_date, regions_checked),
+         regions, facilities, 1 if is_major else 0, due_date, regions_checked,
+         regions_checked_reason, impact, current_action),
     )
 
 
@@ -256,7 +258,9 @@ def set_issue_fields(issue_id, status=None, assigned_to="__unchanged__",
                      solventum_ticket="__unchanged__", servicedesk_ticket="__unchanged__",
                      regions="__unchanged__", facilities="__unchanged__", is_major="__unchanged__",
                      due_date="__unchanged__", regions_checked="__unchanged__",
+                     regions_checked_reason="__unchanged__",
                      fix_applied_all_regions="__unchanged__", fix_not_applied_reason="__unchanged__",
+                     fix_all_regions_by="__unchanged__",
                      impact="__unchanged__", other_regions_affected="__unchanged__",
                      current_action="__unchanged__"):
     sets, params = ["UpdatedAt = SYSDATETIME()"], []
@@ -291,12 +295,18 @@ def set_issue_fields(issue_id, status=None, assigned_to="__unchanged__",
     if regions_checked != "__unchanged__":
         sets.append("RegionsChecked = ?")
         params.append(regions_checked)
+    if regions_checked_reason != "__unchanged__":
+        sets.append("RegionsCheckedReason = ?")
+        params.append(regions_checked_reason)
     if fix_applied_all_regions != "__unchanged__":
         sets.append("FixAppliedAllRegions = ?")
         params.append(fix_applied_all_regions)
     if fix_not_applied_reason != "__unchanged__":
         sets.append("FixNotAppliedReason = ?")
         params.append(fix_not_applied_reason)
+    if fix_all_regions_by != "__unchanged__":
+        sets.append("FixAllRegionsBy = ?")
+        params.append(fix_all_regions_by)
     if impact != "__unchanged__":
         sets.append("Impact = ?")
         params.append(impact)

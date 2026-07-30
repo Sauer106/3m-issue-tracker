@@ -33,6 +33,10 @@ import send_reminders
 STATUSES = ["Open", "In Progress", "Waiting on Solventum", "Hold", "Closed"]
 PROJECT_STATUSES = ["Planned", "In Progress", "On Hold", "Completed", "Cancelled"]
 
+# Leadership notified for Major issues (the brief email, once wired, goes to these people).
+LEADERSHIP = ["Matt Obenrader", "Carly Auriemma", "Giovanna Ferro", "Lauren Hartman"]
+LEADERSHIP_STR = ", ".join(LEADERSHIP)
+
 # Managed from the Admin page (Regions/Facilities tables); reloaded every rerun.
 REGIONS = db.get_region_map()
 
@@ -640,8 +644,12 @@ def new_issue_dialog(user):
     regions, facilities = region_facility_picker("ni")
     regions_checked = st.selectbox(
         "Have all regions been checked for this issue?",
-        ["— select —", "Yes", "No", "N/A"],
+        ["— select —", "Yes", "No", "N/A"], key="ni_rc",
         help="Confirm you've considered whether this affects every region. Choose N/A if not applicable.")
+    rc_reason = ""
+    if regions_checked in ("No", "N/A"):
+        rc_reason = st.text_area("Please explain (required)", key="ni_rc_reason",
+                                 placeholder="Why haven't all regions been checked, or why is it N/A?")
     col1, col2, col3 = st.columns(3)
     assignee = col1.selectbox("Assign to", ["(Unassigned)"] + list(names))
     solventum = col2.text_input("Solventum Ticket #")
@@ -649,11 +657,25 @@ def new_issue_dialog(user):
     m1, m2 = st.columns(2)
     is_major = m1.checkbox("🚩 Major issue")
     due = m2.date_input("Due date (optional)", value=None)
+    impact = current_action = None
+    if is_major:
+        with st.container(border=True):
+            st.markdown(f"**🚩 Major issue brief** <span class='issue-meta'>— notifies leadership: "
+                        f"{LEADERSHIP_STR}</span>", unsafe_allow_html=True)
+            impact = st.text_area("Impact (required)", key="ni_impact",
+                                  placeholder="Who/what is affected, and how badly.")
+            current_action = st.text_area("Current action", key="ni_action",
+                                          placeholder="What's being done right now to fix it.")
+            st.caption("Affected regions are taken from the Regions & Facilities selected above.")
     if st.button("Submit Issue", type="primary", use_container_width=True):
         if not title.strip() or not description.strip():
             st.error("Title and description are required.")
         elif regions_checked == "— select —":
             st.error("Please answer whether all regions have been checked.")
+        elif regions_checked in ("No", "N/A") and not rc_reason.strip():
+            st.error("Please explain why all regions weren't checked (or why it's N/A).")
+        elif is_major and not (impact or "").strip():
+            st.error("A Major issue needs an Impact for the leadership brief.")
         else:
             issue_id = db.create_issue(
                 title.strip(), description.strip(), user["Id"], names.get(assignee),
@@ -661,11 +683,16 @@ def new_issue_dialog(user):
                 json.dumps(regions) if regions else None,
                 json.dumps(facilities) if facilities else None,
                 is_major, due, regions_checked,
+                regions_checked_reason=rc_reason.strip() or None,
+                impact=(impact or "").strip() or None if is_major else None,
+                current_action=(current_action or "").strip() or None if is_major else None,
             )
             if names.get(assignee):
                 notify.notify_assignment(db.get_config(), "issue", issue_id, title.strip(),
                                          db.get_user_by_id(names[assignee]),
                                          user["DisplayName"], user["Id"])
+            if is_major:
+                st.toast(f"Leadership brief queued for {LEADERSHIP_STR} (email pending setup).")
             st.toast(f"Issue #{issue_id} created.")
             st.rerun()
 
@@ -709,23 +736,31 @@ def close_region_dialog(user):
     applies = st.radio("Is the fix applied across all regions?",
                        ["Has been", "Will be", "No"], index=None)
     reason = ""
+    fix_by = None
     if applies == "No":
         reason = st.text_area("Why not? (required)",
                               placeholder="Which regions are excluded, and why?")
+    elif applies == "Will be":
+        fix_by = st.date_input("When will it be fixed in the other regions? (required)", value=None)
     c1, c2 = st.columns(2)
     if c1.button("Confirm close", type="primary", use_container_width=True):
         if applies is None:
             st.error("Please answer whether the fix is applied across all regions.")
         elif applies == "No" and not reason.strip():
             st.error("An explanation is required when the fix doesn't cover every region.")
+        elif applies == "Will be" and not fix_by:
+            st.error("Enter the date the fix will reach the other regions.")
         else:
             comment = p["comment"]
             note = f"Fix applied across all regions: {applies}"
             if applies == "No":
                 note += f" — {reason.strip()}"
+            elif applies == "Will be":
+                note += f" (by {fix_by:%b %d, %Y})"
             comment = f"{comment}\n\n{note}" if comment else note
+            new_val = applies + (f" by {fix_by:%b %d, %Y}" if applies == "Will be" else "")
             edits = p["edits"] + [{"field": "Fix applied across all regions",
-                                   "old": "", "new": applies}]
+                                   "old": "", "new": new_val}]
             db.set_issue_fields(p["issue_id"], status=p["new_status"],
                                 assigned_to=p["assignee_id"],
                                 solventum_ticket=p["solventum"],
@@ -734,7 +769,8 @@ def close_region_dialog(user):
                                 facilities=json.dumps(p["facilities"]) if p["facilities"] else None,
                                 is_major=p["is_major"], due_date=p["due"],
                                 fix_applied_all_regions=applies,
-                                fix_not_applied_reason=reason.strip() if applies == "No" else None)
+                                fix_not_applied_reason=reason.strip() if applies == "No" else None,
+                                fix_all_regions_by=fix_by if applies == "Will be" else None)
             db.add_update(p["issue_id"], user["Id"], comment, p["status_change"],
                           json.dumps(edits) if edits else None)
             del st.session_state["pending_close"]
@@ -742,21 +778,6 @@ def close_region_dialog(user):
             st.rerun()
     if c2.button("Cancel", use_container_width=True):
         del st.session_state["pending_close"]
-        st.rerun()
-
-
-@st.dialog("🚩 Major issue")
-def major_reminder_dialog(issue):
-    st.markdown(f"**#{issue['Id']} — {html.escape(issue['Title'])}** is flagged **Major**.")
-    st.markdown("Remember to **brief leadership**: what the issue is, its **impact**, "
-                "**where** it's happening, whether **other regions** are affected, and "
-                "**what's being done** now. Fill in the brief on this issue so it's ready to send.")
-    for label, key in [("Impact", "Impact"), ("Other regions affected", "OtherRegionsAffected"),
-                       ("Current action", "CurrentAction")]:
-        val = issue.get(key)
-        st.markdown(f"- **{label}:** {html.escape(val) if val else '_not filled in yet_'}",
-                    unsafe_allow_html=True)
-    if st.button("Got it", type="primary", use_container_width=True):
         st.rerun()
 
 
@@ -896,11 +917,6 @@ def issue_detail(issue_id, user):
     lock = db.get_lock_owner(page_key)
     editable = lock is None or lock["UserId"] == user["Id"]
 
-    # Remind about the leadership brief once per Major issue per session.
-    if issue["IsMajor"] and not st.session_state.get(f"major_seen_{issue_id}"):
-        st.session_state[f"major_seen_{issue_id}"] = True
-        major_reminder_dialog(issue)
-
     h1, h2 = st.columns([6, 1], vertical_alignment="center")
     h1.subheader(f"#{issue['Id']} — {issue['Title']}")
     if not editable:
@@ -946,38 +962,39 @@ def issue_detail(issue_id, user):
 
     if issue["IsMajor"]:
         with st.container(border=True):
-            st.markdown("**🚩 Major issue brief** <span class='issue-meta'>(for leadership)</span>",
+            st.markdown(f"**🚩 Major issue brief** <span class='issue-meta'>— notifies leadership: "
+                        f"{LEADERSHIP_STR}</span>", unsafe_allow_html=True)
+            st.markdown("**Affected regions:** "
+                        + (scope_chips(issue, detailed=True)
+                           or "<span class='issue-meta'>none selected</span>"),
                         unsafe_allow_html=True)
-            brief_fields = [("Impact", "Impact", "Who/what is affected, and how badly."),
-                            ("Other regions affected", "OtherRegionsAffected",
-                             "Are other regions affected? Which?"),
-                            ("Current action", "CurrentAction",
-                             "What's being done right now to fix it.")]
             if editable:
                 with st.form(f"brief_{issue_id}"):
-                    vals = {key: st.text_area(label, value=issue.get(key) or "", height=80,
-                                              placeholder=ph)
-                            for label, key, ph in brief_fields}
-                    if st.form_submit_button("Save brief", type="primary"):
-                        brief_edits = [{"field": label, "old": issue.get(key) or "",
-                                        "new": vals[key].strip()}
-                                       for label, key, _ in brief_fields
-                                       if vals[key].strip() != (issue.get(key) or "")]
+                    b_impact = st.text_area("Impact", value=issue.get("Impact") or "", height=80,
+                                            placeholder="Who/what is affected, and how badly.")
+                    b_action = st.text_area("Current action", value=issue.get("CurrentAction") or "",
+                                            height=80, placeholder="What's being done right now to fix it.")
+                    if st.form_submit_button("Save & notify leadership", type="primary"):
+                        brief_edits = []
+                        if b_impact.strip() != (issue.get("Impact") or ""):
+                            brief_edits.append({"field": "Impact", "old": issue.get("Impact") or "",
+                                                "new": b_impact.strip()})
+                        if b_action.strip() != (issue.get("CurrentAction") or ""):
+                            brief_edits.append({"field": "Current action",
+                                                "old": issue.get("CurrentAction") or "",
+                                                "new": b_action.strip()})
                         if brief_edits:
-                            db.set_issue_fields(
-                                issue_id, impact=vals["Impact"].strip() or None,
-                                other_regions_affected=vals["OtherRegionsAffected"].strip() or None,
-                                current_action=vals["CurrentAction"].strip() or None)
+                            db.set_issue_fields(issue_id, impact=b_impact.strip() or None,
+                                                current_action=b_action.strip() or None)
                             db.add_update(issue_id, user["Id"], "", None, json.dumps(brief_edits))
-                            st.toast("Brief saved.")
+                            st.toast(f"Brief saved. Leadership notification for {LEADERSHIP_STR} "
+                                     "queued (email pending setup).")
                             st.rerun()
                         else:
                             st.info("No changes to save.")
             else:
-                for label, key, _ in brief_fields:
-                    val = issue.get(key)
-                    st.markdown(f"**{label}:** {html.escape(val) if val else '_—_'}",
-                                unsafe_allow_html=True)
+                st.markdown(f"**Impact:** {html.escape(issue.get('Impact') or '—')}")
+                st.markdown(f"**Current action:** {html.escape(issue.get('CurrentAction') or '—')}")
 
     if editable and st.button("💡 Propose Fix"):
         propose_fix_dialog(issue, user)

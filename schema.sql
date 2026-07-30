@@ -40,8 +40,11 @@ BEGIN
         Regions      NVARCHAR(MAX) NULL,  -- JSON list of region names
         Facilities   NVARCHAR(MAX) NULL,  -- JSON list of facility names
         RegionsChecked       NVARCHAR(10)  NULL,  -- creation answer: Yes / No / N/A
+        RegionsCheckedReason NVARCHAR(MAX) NULL,  -- required when No / N/A
         FixAppliedAllRegions NVARCHAR(20)  NULL,  -- close answer: Has been / Will be / No
-        FixNotAppliedReason  NVARCHAR(MAX) NULL,
+        FixNotAppliedReason  NVARCHAR(MAX) NULL,  -- required when No
+        FixAllRegionsBy      DATE          NULL,  -- required when Will be
+
         Impact               NVARCHAR(MAX) NULL,  -- major-issue brief
         OtherRegionsAffected NVARCHAR(MAX) NULL,  -- major-issue brief
         CurrentAction        NVARCHAR(MAX) NULL,  -- major-issue brief
@@ -350,8 +353,14 @@ GO
 IF COL_LENGTH('dbo.Issues', 'RegionsChecked') IS NULL
     ALTER TABLE dbo.Issues ADD RegionsChecked NVARCHAR(10) NULL;   -- creation answer: Yes / No / N/A
 GO
+IF COL_LENGTH('dbo.Issues', 'RegionsCheckedReason') IS NULL
+    ALTER TABLE dbo.Issues ADD RegionsCheckedReason NVARCHAR(MAX) NULL;  -- required when No / N/A
+GO
 IF COL_LENGTH('dbo.Issues', 'FixAppliedAllRegions') IS NULL
     ALTER TABLE dbo.Issues ADD FixAppliedAllRegions NVARCHAR(20) NULL;  -- close: Has been / Will be / No
+GO
+IF COL_LENGTH('dbo.Issues', 'FixAllRegionsBy') IS NULL
+    ALTER TABLE dbo.Issues ADD FixAllRegionsBy DATE NULL;  -- required when Will be
 GO
 IF COL_LENGTH('dbo.Issues', 'FixNotAppliedReason') IS NULL
     ALTER TABLE dbo.Issues ADD FixNotAppliedReason NVARCHAR(MAX) NULL;
@@ -430,7 +439,7 @@ GO
 CREATE OR ALTER VIEW dbo.vw_IssuesFlat AS
 SELECT i.Id, i.Title, i.Status, i.IsMajor, i.DueDate,
        i.SolventumTicket, i.ServiceDeskTicket,
-       i.RegionsChecked, i.FixAppliedAllRegions,
+       i.RegionsChecked, i.FixAppliedAllRegions, i.FixAllRegionsBy,
        r.DisplayName AS ReportedBy, a.DisplayName AS AssignedTo,
        i.CreatedAt, i.UpdatedAt, i.ResolvedAt,
        (SELECT MAX(u.CreatedAt) FROM IssueUpdates u WHERE u.IssueId = i.Id) AS LastUpdateAt
