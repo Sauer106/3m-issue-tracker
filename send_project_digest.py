@@ -16,46 +16,38 @@ from mailer import send_email
 ACTIVE_STATUSES = ["Planned", "In Progress", "On Hold"]
 UPCOMING_DAYS = 30
 EVENT_PILL_COLORS = {"Go-Live": "#2e7d32", "Deadline": "#c62828", "Projected Go-Live": "#e65100"}
-TARGET_PILL_COLOR = "#00796b"
 
 
-def upcoming_table(events, targets):
-    """An email-safe table of upcoming calendar events and project target dates."""
-    rows = [(e["EventDate"], e["EventTime"], "event", e) for e in events]
-    rows += [(p["TargetDate"], None, "target", p) for p in targets]
-    if not rows:
+def upcoming_table(events):
+    """An email-safe table of upcoming calendar events."""
+    if not events:
         return ""
-    rows.sort(key=lambda x: (x[0], x[1] or datetime.min.time()))
+    rows = sorted(events, key=lambda e: (e["EventDate"], e["EventTime"] or datetime.min.time()))
     th = (f'padding:8px 10px;font-family:{es.FONT};font-size:11px;color:{es.MUTED};'
           f'text-transform:uppercase;letter-spacing:.03em;text-align:left;'
           f'background:#f3f4f6;border-bottom:2px solid {es.BORDER};')
     body = ""
-    for idx, (d, t, kind, obj) in enumerate(rows):
+    for idx, e in enumerate(rows):
         td = (f'padding:9px 10px;font-family:{es.FONT};font-size:13px;color:{es.INK};'
               f'border-bottom:1px solid {es.BORDER};vertical-align:top;')
         bg = "#ffffff" if idx % 2 == 0 else "#fafbfc"
-        when = f"{d:%a %b %d}" + (f" {t:%#I:%M %p}" if t else "")
-        if kind == "event":
-            what = es.pill(obj["Category"], EVENT_PILL_COLORS.get(obj["Category"], "#546e7a"))
-            title = es.escape(obj["Title"])
-            if obj["EndDate"] and obj["EndDate"] != d:
-                title += f' <span style="color:{es.MUTED};">(through {obj["EndDate"]:%b %d})</span>'
-            extra = ", ".join(p["Title"] for p in db.list_event_projects(obj["Id"]))
-        else:
-            what = es.pill("Project target", TARGET_PILL_COLOR)
-            title = es.escape(obj["Title"])
-            extra = obj["AssignedToName"] or ""
+        when = f"{e['EventDate']:%a %b %d}" + (f" {e['EventTime']:%#I:%M %p}" if e["EventTime"] else "")
+        what = es.pill(e["Category"], EVENT_PILL_COLORS.get(e["Category"], "#546e7a"))
+        title = es.escape(e["Title"])
+        if e["EndDate"] and e["EndDate"] != e["EventDate"]:
+            title += f' <span style="color:{es.MUTED};">(through {e["EndDate"]:%b %d})</span>'
+        projects = ", ".join(p["Title"] for p in db.list_event_projects(e["Id"]))
         body += (f'<tr style="background:{bg};">'
                  f'<td style="{td}white-space:nowrap;color:{es.MUTED};">{when}</td>'
                  f'<td style="{td}white-space:nowrap;">{what}</td>'
                  f'<td style="{td}font-weight:bold;">{title}</td>'
-                 f'<td style="{td}color:{es.MUTED};">{es.escape(extra)}</td>'
+                 f'<td style="{td}color:{es.MUTED};">{es.escape(projects)}</td>'
                  f'</tr>')
     return (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'style="border-collapse:collapse;border:1px solid {es.BORDER};">'
         f'<tr><th style="{th}">When</th><th style="{th}">Type</th><th style="{th}">What</th>'
-        f'<th style="{th}">Projects / owner</th></tr>{body}</table>'
+        f'<th style="{th}">Projects</th></tr>{body}</table>'
     )
 
 
@@ -127,8 +119,7 @@ def render(config):
     updates = latest_update_map([p["Id"] for p in active + completed])
     up_start = cutoff.date()
     up_end = up_start + timedelta(days=UPCOMING_DAYS)
-    upcoming_html = upcoming_table(db.list_events(up_start, up_end),
-                                   db.list_projects_with_target(up_start, up_end))
+    upcoming_html = upcoming_table(db.list_events(up_start, up_end))
     html = build_html(active, new_projects, completed, on_hold, updates, upcoming_html,
                       cutoff, week_start, app_url)
     subject = f"3M Weekly Project Digest {cutoff:%B %d, %Y}"

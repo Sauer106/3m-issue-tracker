@@ -1319,8 +1319,6 @@ def _calendar_grid(year, month, items_by_day, today):
 def _cal_legend():
     parts = [f"<span class='cal-leg'><span class='cal-dot' style='background:{c}'></span>{k}</span>"
              for k, c in EVENT_COLORS.items()]
-    parts.append(f"<span class='cal-leg'><span class='cal-dot' style='background:{PROJECT_TARGET_COLOR}'>"
-                 f"</span>🎯 Project target</span>")
     return "<div class='cal-legend'>" + " ".join(parts) + "</div>"
 
 
@@ -1490,10 +1488,6 @@ def page_calendar(user, config):
             items_by_day.setdefault(d, []).append(
                 {"sort": (d, e["EventTime"] or midnight), "chip": _cal_chip(color, label)})
             d += timedelta(days=1)
-    for p in db.list_projects_with_target(grid_start, grid_end):
-        items_by_day.setdefault(p["TargetDate"], []).append(
-            {"sort": (p["TargetDate"], midnight),
-             "chip": _cal_chip(PROJECT_TARGET_COLOR, f"🎯 {p['Title']}")})
 
     st.markdown(_CAL_CSS + _calendar_grid(year, month, items_by_day, today), unsafe_allow_html=True)
     st.markdown(_cal_legend(), unsafe_allow_html=True)
@@ -1503,46 +1497,31 @@ def page_calendar(user, config):
     m_end = datetime(year, month, calendar.monthrange(year, month)[1]).date()
     agenda = [("event", e["EventDate"], e["EventTime"] or midnight, e)
               for e in db.list_events(m_start, m_end)]
-    agenda += [("project", p["TargetDate"], midnight, p)
-               for p in db.list_projects_with_target(m_start, m_end)]
     agenda.sort(key=lambda x: (x[1], x[2]))
 
     if not agenda:
-        st.info("Nothing scheduled this month. Use **New Event**, or set a **Target date** "
-                "on a project.")
+        st.info("Nothing scheduled this month. Use **New Event** to add one.")
         return
 
-    for kind, d, _t, obj in agenda:
+    for _kind, d, _t, obj in agenda:
         with st.container(border=True):
             c1, c2 = st.columns([6, 1], vertical_alignment="center")
-            if kind == "event":
-                color = EVENT_COLORS.get(obj["Category"], NEUTRAL)
-                when = f"{d:%a %b %d}"
-                if obj["EventTime"]:
-                    when += f" · {obj['EventTime']:%#I:%M %p}"
-                if obj["EndDate"] and obj["EndDate"] != d:
-                    when += f" → {obj['EndDate']:%b %d}"
-                links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
-                                for l in db.list_event_projects(obj["Id"]))
-                c1.markdown(
-                    f"{chip(obj['Category'], color)} <b>{html.escape(obj['Title'])}</b>"
-                    f"<p class='issue-meta'>{when} · added by {html.escape(obj['CreatedByName'])}</p>"
-                    f"{links}", unsafe_allow_html=True)
-                if c2.button("Open", key=f"calev_{obj['Id']}", use_container_width=True):
-                    for k in [k for k in st.session_state if k.startswith(f"ee{obj['Id']}_")]:
-                        del st.session_state[k]
-                    event_detail_dialog(obj, user)
-            else:
-                c1.markdown(
-                    f"{target_chip(obj)} <b>{html.escape(obj['Title'])}</b>"
-                    f"<p class='issue-meta'>Project target · "
-                    f"{chip(obj['Status'], STATUS_COLORS.get(obj['Status'], NEUTRAL))} · "
-                    f"assigned to {html.escape(obj['AssignedToName'] or 'no one')}</p>",
-                    unsafe_allow_html=True)
-                if c2.button("Open project", key=f"caltgt_{obj['Id']}", use_container_width=True):
-                    st.session_state.selected_project = obj["Id"]
-                    st.session_state.page = "Projects"
-                    st.rerun()
+            color = EVENT_COLORS.get(obj["Category"], NEUTRAL)
+            when = f"{d:%a %b %d}"
+            if obj["EventTime"]:
+                when += f" · {obj['EventTime']:%#I:%M %p}"
+            if obj["EndDate"] and obj["EndDate"] != d:
+                when += f" → {obj['EndDate']:%b %d}"
+            links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
+                            for l in db.list_event_projects(obj["Id"]))
+            c1.markdown(
+                f"{chip(obj['Category'], color)} <b>{html.escape(obj['Title'])}</b>"
+                f"<p class='issue-meta'>{when} · added by {html.escape(obj['CreatedByName'])}</p>"
+                f"{links}", unsafe_allow_html=True)
+            if c2.button("Open", key=f"calev_{obj['Id']}", use_container_width=True):
+                for k in [k for k in st.session_state if k.startswith(f"ee{obj['Id']}_")]:
+                    del st.session_state[k]
+                event_detail_dialog(obj, user)
 
 
 # ---------------------------------------------------------------- dashboard
@@ -1625,41 +1604,26 @@ def page_dashboard(user, config):
     up_start = now.date()
     up_end = up_start + timedelta(days=30)
     midnight = datetime.min.time()
-    upcoming = [("event", e["EventDate"], e["EventTime"] or midnight, e)
-                for e in db.list_events(up_start, up_end)]
-    upcoming += [("project", p["TargetDate"], midnight, p)
-                 for p in db.list_projects_with_target(up_start, up_end)]
-    upcoming.sort(key=lambda x: (x[1], x[2]))
+    upcoming = sorted(db.list_events(up_start, up_end),
+                      key=lambda e: (e["EventDate"], e["EventTime"] or midnight))
     if not upcoming:
-        st.caption("No calendar events or project target dates in the next 30 days.")
+        st.caption("No calendar events in the next 30 days.")
     else:
-        for kind, d, _t, obj in upcoming[:12]:
+        for e in upcoming[:12]:
             with st.container(border=True):
                 u1, u2 = st.columns([6, 1], vertical_alignment="center")
-                if kind == "event":
-                    color = EVENT_COLORS.get(obj["Category"], NEUTRAL)
-                    when = f"{d:%a %b %d}"
-                    if obj["EventTime"]:
-                        when += f" · {obj['EventTime']:%#I:%M %p}"
-                    links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
-                                    for l in db.list_event_projects(obj["Id"]))
-                    u1.markdown(f"{chip(obj['Category'], color)} <b>{html.escape(obj['Title'])}</b>"
-                                f"<p class='issue-meta'>{when}</p>{links}", unsafe_allow_html=True)
-                    if u2.button("Open", key=f"dashev_{obj['Id']}", use_container_width=True):
-                        st.session_state.open_event_id = obj["Id"]
-                        st.session_state.page = "Calendar"
-                        st.rerun()
-                else:
-                    u1.markdown(
-                        f"{target_chip(obj)} <b>{html.escape(obj['Title'])}</b>"
-                        f"<p class='issue-meta'>Project target · "
-                        f"{chip(obj['Status'], STATUS_COLORS.get(obj['Status'], NEUTRAL))} · "
-                        f"assigned to {html.escape(obj['AssignedToName'] or 'no one')}</p>",
-                        unsafe_allow_html=True)
-                    if u2.button("Open project", key=f"dashtgt_{obj['Id']}", use_container_width=True):
-                        st.session_state.selected_project = obj["Id"]
-                        st.session_state.page = "Projects"
-                        st.rerun()
+                color = EVENT_COLORS.get(e["Category"], NEUTRAL)
+                when = f"{e['EventDate']:%a %b %d}"
+                if e["EventTime"]:
+                    when += f" · {e['EventTime']:%#I:%M %p}"
+                links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
+                                for l in db.list_event_projects(e["Id"]))
+                u1.markdown(f"{chip(e['Category'], color)} <b>{html.escape(e['Title'])}</b>"
+                            f"<p class='issue-meta'>{when}</p>{links}", unsafe_allow_html=True)
+                if u2.button("Open", key=f"dashev_{e['Id']}", use_container_width=True):
+                    st.session_state.open_event_id = e["Id"]
+                    st.session_state.page = "Calendar"
+                    st.rerun()
         if len(upcoming) > 12:
             st.caption(f"+{len(upcoming) - 12} more — see the Calendar.")
 
