@@ -41,6 +41,7 @@ Click **Admin** in the sidebar. It gathers everything admin-only in one place:
 - **Reassign work** — move a person's open items to someone else.
 - **Email recipients** — control who gets the digests and reminders.
 - **Regions & Facilities** — curate the region/facility list.
+- **Internal Teams** and **Vendors** — curate the master lists tagged on projects.
 - **Email tools** — test or send the digests on demand.
 - **Recycle bin** — restore or permanently remove deleted items.
 - **Audit log** — a record of deletions and admin actions.
@@ -112,6 +113,8 @@ On the Admin page, under **Regions & Facilities**:
 Changes take effect immediately for everyone the next time they open a picker.
 
 **Important:** items already tagged keep their original text. If you rename "Vegas" to "Nevada," an issue that was tagged "Vegas" still displays "Vegas" in its history and on its card. This is on purpose, so historical records reflect what was true at the time. New tagging uses the new name. If you ever need existing records mass-updated to a new name, that's a database change a developer would make.
+
+**Internal Teams and Vendors** work the same way — the sections just below Regions & Facilities let you add, rename, and delete the entries that people pick from in a project's Internal Teams and Vendors sections. As with regions, renaming or deleting one doesn't change projects already tagged with it.
 
 ---
 

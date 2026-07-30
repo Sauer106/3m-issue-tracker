@@ -190,8 +190,11 @@ What's different from issues:
 - The person who made it is the **creator** rather than a reporter.
 
 - Projects can have **milestones** (see below); issues use a single due date instead.
+- Projects can record the **internal teams + analysts** and the **vendors** involved (see below).
 
 Everything else is the same: assignee, Solventum and ServiceDesk tickets, regions and facilities, attachments, the update form, and the history timeline all behave just like issues.
+
+**Teams and vendors.** Open a project to find **👥 Internal Teams** and **🏢 Vendors** sections. Add a team (from the admin-managed list) with the analyst(s) on it, and add vendors with their **role, contact, and status**. Add/edit/delete are recorded in the project history. Administrators curate the team and vendor lists on the Admin page.
 
 ---
 
@@ -212,8 +215,9 @@ On the Projects list, each project card shows its **next open milestone** as a c
 The **Calendar** card is a month view of scheduled **events** — things like go-lives and deadlines, optionally tied to one or more projects.
 
 - Move between months with **◀ Prev** / **Next ▶**, or jump back with **Today**. Today's date is outlined.
-- Each event shows as a small colored bar on its day: **green** for Go-Live, **red** for Deadline, **orange** for Projected Go-Live. Click a bar to open the event. Below the grid, an **Agenda** lists the same events for the month with an **Open** button on each.
-- **➕ New Event** creates one: give it a title, a date, optionally a start time and a multi-day end date, a category, a description, and link any projects it relates to.
+- Each event shows as a small colored bar on its day: **green** Go-Live, **red** Deadline, **orange** Projected Go-Live, **blue** Testing Event. Click a bar to open the event. Below the grid, an **Agenda** lists the month's events with an **Open** button on each.
+- **➕ New Event** creates one: a title, a date, a category, and a **required resource** — one or more people from the user list. Optionally set a **start and end time** (12-hour). For a **multi-day** event, set an end date and choose which **days of the week** it runs, so a weekday-only window skips weekends on the grid. You can also add a description and link projects.
+- Events show their **resource(s)** as 👤 chips on the agenda, the dashboard, and the event view.
 - Opening an event shows its details and a button to **open each linked project**. From a project, the **📅 Calendar** section lists its linked events with a button to open each — so you can hop between an event and its projects in either direction.
 
 You can edit or delete an event you created; administrators can edit any. Others see it read-only.
