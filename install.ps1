@@ -98,10 +98,15 @@ if (-not $SkipTasks) {
 
     Write-Host "Registering scheduled tasks..."
     $appArgs = "run `"$AppDir\app.py`" --server.address 0.0.0.0 --server.port $Port --server.headless true$tlsArgs"
+    # No execution time limit (Streamlit runs indefinitely) + restart on crash.
+    $appSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 2) `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName "IssueTracker App" -Force `
         -Action    (New-ScheduledTaskAction -Execute $streamlit -Argument $appArgs) `
         -Trigger   (New-ScheduledTaskTrigger -AtStartup) `
-        -Principal (New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount) | Out-Null
+        -Principal (New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount) `
+        -Settings  $appSettings | Out-Null
     schtasks /Create /F /TN "IssueTracker Reminders" /SC WEEKLY /D THU /ST 09:00 /RU SYSTEM `
         /TR "`"$python`" `"$AppDir\send_reminders.py`"" | Out-Null
     schtasks /Create /F /TN "IssueTracker Weekly Digest" /SC WEEKLY /D FRI /ST 07:00 /RU SYSTEM `
