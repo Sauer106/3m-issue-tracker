@@ -17,6 +17,7 @@ import streamlit.components.v1 as components
 
 import auth
 import db
+import email_style as es
 import mailer
 import notify
 import reporting
@@ -31,6 +32,8 @@ PROJECT_STATUSES = ["Planned", "In Progress", "On Hold", "Completed", "Cancelled
 REGIONS = db.get_region_map()
 
 st.set_page_config(page_title="3M Issues & Projects Tracker", page_icon="🎯", layout="wide")
+
+APP_VERSION = "1.1.0"
 
 
 STATUS_COLORS = {"Open": "#1976d2", "In Progress": "#7b1fa2", "Resolved": "#388e3c", "Closed": "#616161",
@@ -1729,4 +1732,182 @@ def main():
         page_admin(user, config)
 
 
+FAQ_ITEMS = [
+    ("How do I sign in for the first time?",
+     "Use the temporary password an administrator gave you. You'll be asked to set your own "
+     "password right away, then to set up two-factor authentication (2FA) by scanning a QR "
+     "code with an authenticator app (it shows up as **3M Tracker**). After that, each login "
+     "asks for a 6-digit code from that app."),
+    ("I'm locked out or forgot my password.",
+     "Five failed attempts locks the account for 15 minutes. For a password or 2FA reset, ask "
+     "an administrator — they can reset your password and clear 2FA from the Admin page."),
+    ("What's the difference between an Issue and a Project?",
+     "**Issues** track problems and requests in 3M that need resolution. **Projects** track "
+     "longer, planned bodies of work. They have separate pages and separate weekly digests."),
+    ("What are the Solventum and ServiceDesk ticket fields for?",
+     "They link a record to the matching ticket number in those systems so everyone can "
+     "cross-reference. The **Waiting on Solventum** status requires a Solventum ticket number."),
+    ("What does the 🚩 Major flag mean?",
+     "It marks an issue as high-impact. When you close a Major issue or accept a proposed fix "
+     "for it, you'll be asked to confirm whether the resolution applies to every region."),
+    ("How do regions and facilities work?",
+     "Use the picker to tag which areas an item affects. Selecting every region collapses to a "
+     "single **All Regions** tag. Administrators manage the region and facility lists on the "
+     "Admin page."),
+    ("What are the statuses, and what is 'Propose a Fix'?",
+     "Issues move Open → In Progress → (Waiting on Solventum / Hold) → Closed. Anyone can "
+     "**Propose a Fix**; the assigned analyst can accept it — which moves the issue to In "
+     "Progress — or decline it."),
+    ("How do due dates and the 'Needs update' filter work?",
+     "Set an optional due date on an issue; overdue items get a red badge and appear on the "
+     "dashboard. The **Needs update** filter shows items that haven't been touched recently, "
+     "and the Thursday reminder email links straight to them."),
+    ("When do emails go out?",
+     "You get an email the moment an item is assigned to you or you're @mentioned in a comment. "
+     "Weekly, there's an Issue digest and a Project digest on Friday morning and an update "
+     "reminder on Thursday. Administrators manage who receives digests on the Admin page."),
+    ("Can two people edit the same record at once?",
+     "The tracker shows who else is viewing a record in real time. The first person to open it "
+     "for editing holds the lock and everyone else is read-only until it's released — it frees "
+     "after a period of inactivity, and an administrator can take over."),
+    ("How do I attach a file?",
+     "Open an issue or project and use the attachments section to upload supporting files."),
+    ("Something is wrong, or I have a request.",
+     "Use the **Report a Bug** button next to Help — it goes straight to the administrators. "
+     "For access, password, or 2FA resets, contact an administrator directly."),
+]
+
+
+@st.dialog("Help & FAQ", width="large")
+def help_dialog():
+    st.caption(f"3M Issues & Projects Tracker · v{APP_VERSION}")
+    st.markdown("Common questions about using the tracker. Still stuck? Use **Report a Bug** "
+                "to reach an administrator.")
+    for question, answer in FAQ_ITEMS:
+        with st.expander(question):
+            st.markdown(answer)
+
+
+def _submit_bug_report(user, where, what, steps):
+    """Email active administrators the bug report and record it in the audit log.
+    Best-effort: returns True if the email was sent, False if it was only logged."""
+    config = db.get_config()
+    detail = f"[{where}] {what}" + (f" | Steps: {steps}" if steps else "")
+    try:
+        db.audit(user["Id"], "Bug report", detail)
+    except Exception as exc:  # noqa: BLE001 - logging is best-effort
+        print(f"bug report: audit failed: {exc}")
+
+    admins = [u for u in db.list_users(active_only=True) if u["IsAdmin"] and u["Email"]]
+    if not admins:
+        return False
+
+    reporter = f"{user['DisplayName']} ({user.get('Email') or 'no email on file'})"
+    what_html = html.escape(what).replace("\n", "<br>")
+    body = (f"<b>Reporter:</b> {html.escape(reporter)}<br>"
+            f"<b>Where:</b> {html.escape(where)}<br>"
+            f"<b>Version:</b> v{APP_VERSION}<br><br>"
+            f"<b>What happened</b><br>{what_html}")
+    if steps:
+        body += f"<br><br><b>Steps to reproduce</b><br>{html.escape(steps).replace(chr(10), '<br>')}"
+    inner = es.intro_row(body)
+    app_url = config["app"].get("app_url", "")
+    subject = f"3M Tracker bug report — {where}"
+    body_html = es.shell("Bug report", inner, app_url,
+                         "This is an automated bug report from the 3M Issues &amp; Projects Tracker.",
+                         button_text="Open the Tracker")
+    try:
+        mailer.send_email(config, [a["Email"] for a in admins], subject, body_html)
+        return True
+    except Exception as exc:  # noqa: BLE001 - never break the reporting flow
+        print(f"bug report: email failed: {exc}")
+        return False
+
+
+@st.dialog("Report a Bug", width="large")
+def bug_report_dialog(user):
+    st.markdown("Tell us what went wrong. This goes straight to the administrators.")
+    places = ["Issues", "Projects", "Dashboard", "Admin", "Login / sign-in", "Emails", "Other"]
+    current = st.session_state.get("page")
+    where = st.selectbox("Where did it happen?", places,
+                         index=places.index(current) if current in places else 0)
+    what = st.text_area("What happened?", height=140,
+                        placeholder="Describe the problem. What did you expect, and what "
+                                    "happened instead?")
+    steps = st.text_area("Steps to reproduce (optional)", height=100,
+                         placeholder="1. ...\n2. ...")
+    if st.button("Send Report", type="primary", use_container_width=True):
+        if not what.strip():
+            st.error("Please describe what happened.")
+        else:
+            sent = _submit_bug_report(user, where, what.strip(), steps.strip())
+            st.toast("Report sent to the administrators." if sent
+                     else "Report recorded for the administrators.")
+            st.rerun()
+
+
+def render_footer():
+    """A small, muted footer with Help/Report actions, shown at the bottom of
+    every screen. Rendered after main() so it lands below whichever page (or the
+    login/2FA screen) was just drawn, since Streamlit paints in call order."""
+    user = st.session_state.get("user")
+    year = datetime.now().year
+    st.markdown(
+        """
+        <style>
+        .footer-rule {
+            border: none;
+            border-top: 1px solid rgba(128, 128, 128, 0.2);
+            margin: 2.5rem 0 0.4rem 0;
+        }
+        .app-footer {
+            text-align: center;
+            color: rgba(128, 128, 128, 0.85);
+            font-size: 0.78rem;
+            letter-spacing: 0.02em;
+            padding: 0.2rem 0 0.6rem 0;
+        }
+        .app-footer strong { color: rgba(128, 128, 128, 0.95); font-weight: 600; }
+        .app-footer .sep { margin: 0 0.5rem; opacity: 0.5; }
+        /* Make the footer action buttons read like quiet text links */
+        [class*="st-key-footer_"] button {
+            border: none;
+            background: transparent;
+            color: rgba(128, 128, 128, 0.9);
+            font-size: 0.82rem;
+            font-weight: 500;
+            padding: 0.2rem 0.4rem;
+            min-height: 0;
+        }
+        [class*="st-key-footer_"] button:hover { color: #ff4b4b; background: transparent; }
+        [class*="st-key-footer_"] button:focus { box-shadow: none; }
+        </style>
+        <hr class='footer-rule'>
+        """,
+        unsafe_allow_html=True,
+    )
+    if user:
+        _, c1, c2, _ = st.columns([3, 2, 2, 3])
+        if c1.button("❓ Help & FAQ", key="footer_help", use_container_width=True):
+            help_dialog()
+        if c2.button("🐛 Report a Bug", key="footer_bug", use_container_width=True):
+            bug_report_dialog(user)
+    else:
+        _, c1, _ = st.columns([3, 2, 3])
+        if c1.button("❓ Help & FAQ", key="footer_help", use_container_width=True):
+            help_dialog()
+    st.markdown(
+        f"""
+        <div class='app-footer'>
+            <strong>3M Issues &amp; Projects Tracker</strong>
+            <span class='sep'>•</span> v{APP_VERSION}
+            <span class='sep'>•</span> Developed by Michael Sauer
+            <span class='sep'>•</span> &copy; {year}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 main()
+render_footer()
