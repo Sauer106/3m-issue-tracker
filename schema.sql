@@ -39,6 +39,12 @@ BEGIN
         ServiceDeskTicket NVARCHAR(50) NULL,
         Regions      NVARCHAR(MAX) NULL,  -- JSON list of region names
         Facilities   NVARCHAR(MAX) NULL,  -- JSON list of facility names
+        RegionsChecked       NVARCHAR(10)  NULL,  -- creation answer: Yes / No / N/A
+        FixAppliedAllRegions NVARCHAR(20)  NULL,  -- close answer: Has been / Will be / No
+        FixNotAppliedReason  NVARCHAR(MAX) NULL,
+        Impact               NVARCHAR(MAX) NULL,  -- major-issue brief
+        OtherRegionsAffected NVARCHAR(MAX) NULL,  -- major-issue brief
+        CurrentAction        NVARCHAR(MAX) NULL,  -- major-issue brief
         ReportedBy  INT NOT NULL REFERENCES dbo.Users(Id),
         AssignedTo  INT NULL     REFERENCES dbo.Users(Id),
         CreatedAt   DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
@@ -340,6 +346,26 @@ IF COL_LENGTH('dbo.Projects', 'TargetDate') IS NULL
     ALTER TABLE dbo.Projects ADD TargetDate DATE NULL;
 GO
 
+-- Upgrade: issue regional-coverage lifecycle + major-issue brief (v1.3).
+IF COL_LENGTH('dbo.Issues', 'RegionsChecked') IS NULL
+    ALTER TABLE dbo.Issues ADD RegionsChecked NVARCHAR(10) NULL;   -- creation answer: Yes / No / N/A
+GO
+IF COL_LENGTH('dbo.Issues', 'FixAppliedAllRegions') IS NULL
+    ALTER TABLE dbo.Issues ADD FixAppliedAllRegions NVARCHAR(20) NULL;  -- close: Has been / Will be / No
+GO
+IF COL_LENGTH('dbo.Issues', 'FixNotAppliedReason') IS NULL
+    ALTER TABLE dbo.Issues ADD FixNotAppliedReason NVARCHAR(MAX) NULL;
+GO
+IF COL_LENGTH('dbo.Issues', 'Impact') IS NULL
+    ALTER TABLE dbo.Issues ADD Impact NVARCHAR(MAX) NULL;          -- major-issue brief
+GO
+IF COL_LENGTH('dbo.Issues', 'OtherRegionsAffected') IS NULL
+    ALTER TABLE dbo.Issues ADD OtherRegionsAffected NVARCHAR(MAX) NULL;
+GO
+IF COL_LENGTH('dbo.Issues', 'CurrentAction') IS NULL
+    ALTER TABLE dbo.Issues ADD CurrentAction NVARCHAR(MAX) NULL;
+GO
+
 -- Calendar events, each optionally linked to one or more Projects.
 IF OBJECT_ID('dbo.CalendarEvents') IS NULL
 BEGIN
@@ -404,6 +430,7 @@ GO
 CREATE OR ALTER VIEW dbo.vw_IssuesFlat AS
 SELECT i.Id, i.Title, i.Status, i.IsMajor, i.DueDate,
        i.SolventumTicket, i.ServiceDeskTicket,
+       i.RegionsChecked, i.FixAppliedAllRegions,
        r.DisplayName AS ReportedBy, a.DisplayName AS AssignedTo,
        i.CreatedAt, i.UpdatedAt, i.ResolvedAt,
        (SELECT MAX(u.CreatedAt) FROM IssueUpdates u WHERE u.IssueId = i.Id) AS LastUpdateAt

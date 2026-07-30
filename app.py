@@ -638,6 +638,10 @@ def new_issue_dialog(user):
     description = st.text_area("Description", height=150,
                                placeholder="What's happening in 3M? Include steps to reproduce if applicable.")
     regions, facilities = region_facility_picker("ni")
+    regions_checked = st.selectbox(
+        "Have all regions been checked for this issue?",
+        ["— select —", "Yes", "No", "N/A"],
+        help="Confirm you've considered whether this affects every region. Choose N/A if not applicable.")
     col1, col2, col3 = st.columns(3)
     assignee = col1.selectbox("Assign to", ["(Unassigned)"] + list(names))
     solventum = col2.text_input("Solventum Ticket #")
@@ -648,13 +652,15 @@ def new_issue_dialog(user):
     if st.button("Submit Issue", type="primary", use_container_width=True):
         if not title.strip() or not description.strip():
             st.error("Title and description are required.")
+        elif regions_checked == "— select —":
+            st.error("Please answer whether all regions have been checked.")
         else:
             issue_id = db.create_issue(
                 title.strip(), description.strip(), user["Id"], names.get(assignee),
                 solventum.strip() or None, servicedesk.strip() or None,
                 json.dumps(regions) if regions else None,
                 json.dumps(facilities) if facilities else None,
-                is_major, due,
+                is_major, due, regions_checked,
             )
             if names.get(assignee):
                 notify.notify_assignment(db.get_config(), "issue", issue_id, title.strip(),
@@ -694,45 +700,63 @@ def new_project_dialog(user):
             st.rerun()
 
 
-@st.dialog("Major issue — region rollout check")
-def major_close_dialog(user):
-    p = st.session_state.get("pending_major_close")
+@st.dialog("Closing issue — region rollout check")
+def close_region_dialog(user):
+    p = st.session_state.get("pending_close")
     if not p:
         st.rerun()
-    st.warning(f"Issue #{p['issue_id']} is flagged 🚩 **Major** and is being marked "
-               f"**{p['new_status']}**.")
-    applies = st.radio("Will this fix be applied to every region?",
-                       ["Yes — all regions", "No — limited rollout"])
+    st.warning(f"Issue #{p['issue_id']} is being marked **{p['new_status']}**.")
+    applies = st.radio("Is the fix applied across all regions?",
+                       ["Has been", "Will be", "No"], index=None)
     reason = ""
-    if applies.startswith("No"):
+    if applies == "No":
         reason = st.text_area("Why not? (required)",
                               placeholder="Which regions are excluded, and why?")
     c1, c2 = st.columns(2)
-    if c1.button("Confirm", type="primary", use_container_width=True):
-        if applies.startswith("No") and not reason.strip():
+    if c1.button("Confirm close", type="primary", use_container_width=True):
+        if applies is None:
+            st.error("Please answer whether the fix is applied across all regions.")
+        elif applies == "No" and not reason.strip():
             st.error("An explanation is required when the fix doesn't cover every region.")
         else:
-            all_regions = applies.startswith("Yes")
             comment = p["comment"]
-            if not all_regions:
-                note = f"Not applied to all regions: {reason.strip()}"
-                comment = f"{comment}\n\n{note}" if comment else note
-            edits = p["edits"] + [{"field": "Applied to all regions", "old": "",
-                                   "new": "Yes" if all_regions else "No"}]
+            note = f"Fix applied across all regions: {applies}"
+            if applies == "No":
+                note += f" — {reason.strip()}"
+            comment = f"{comment}\n\n{note}" if comment else note
+            edits = p["edits"] + [{"field": "Fix applied across all regions",
+                                   "old": "", "new": applies}]
             db.set_issue_fields(p["issue_id"], status=p["new_status"],
                                 assigned_to=p["assignee_id"],
                                 solventum_ticket=p["solventum"],
                                 servicedesk_ticket=p["servicedesk"],
                                 regions=json.dumps(p["regions"]) if p["regions"] else None,
                                 facilities=json.dumps(p["facilities"]) if p["facilities"] else None,
-                                is_major=p["is_major"], due_date=p["due"])
+                                is_major=p["is_major"], due_date=p["due"],
+                                fix_applied_all_regions=applies,
+                                fix_not_applied_reason=reason.strip() if applies == "No" else None)
             db.add_update(p["issue_id"], user["Id"], comment, p["status_change"],
                           json.dumps(edits) if edits else None)
-            del st.session_state["pending_major_close"]
-            st.toast("Update saved.")
+            del st.session_state["pending_close"]
+            st.toast("Issue closed.")
             st.rerun()
     if c2.button("Cancel", use_container_width=True):
-        del st.session_state["pending_major_close"]
+        del st.session_state["pending_close"]
+        st.rerun()
+
+
+@st.dialog("🚩 Major issue")
+def major_reminder_dialog(issue):
+    st.markdown(f"**#{issue['Id']} — {html.escape(issue['Title'])}** is flagged **Major**.")
+    st.markdown("Remember to **brief leadership**: what the issue is, its **impact**, "
+                "**where** it's happening, whether **other regions** are affected, and "
+                "**what's being done** now. Fill in the brief on this issue so it's ready to send.")
+    for label, key in [("Impact", "Impact"), ("Other regions affected", "OtherRegionsAffected"),
+                       ("Current action", "CurrentAction")]:
+        val = issue.get(key)
+        st.markdown(f"- **{label}:** {html.escape(val) if val else '_not filled in yet_'}",
+                    unsafe_allow_html=True)
+    if st.button("Got it", type="primary", use_container_width=True):
         st.rerun()
 
 
@@ -781,20 +805,23 @@ def page_issues(user, config):
         bmap = {f"#{i['Id']} — {i['Title']}": i for i in open_issues_bulk}
         picked = st.multiselect("Issues to act on", list(bmap), key="bulk_pick")
         bc1, bc2 = st.columns([2, 3])
-        action = bc1.selectbox("Action", ["Close", "Change status", "Reassign"], key="bulk_action")
+        action = bc1.selectbox("Action", ["Change status", "Reassign"], key="bulk_action")
         bulk_users = {u["DisplayName"]: u["Id"] for u in db.list_users(active_only=True)}
         target = None
         if action == "Change status":
-            # 'Waiting on Solventum' is excluded - it needs a per-issue ticket number.
-            target = bc2.selectbox("New status", [s for s in STATUSES if s != "Waiting on Solventum"],
+            # 'Waiting on Solventum' needs a per-issue ticket #; 'Closed' must go through the
+            # per-issue close gate (region-rollout check), so both are excluded from bulk.
+            target = bc2.selectbox("New status",
+                                   [s for s in STATUSES if s not in ("Waiting on Solventum", "Closed")],
                                    key="bulk_status")
+            st.caption("To close an issue, open it — closing captures the region-rollout answer.")
         elif action == "Reassign":
             target = bc2.selectbox("Assign to", ["(Unassigned)"] + list(bulk_users), key="bulk_assignee")
         if st.button("Apply", disabled=not picked, key="bulk_apply"):
             chosen = [bmap[p] for p in picked]
             for i in chosen:
-                if action in ("Close", "Change status"):
-                    new_s = "Closed" if action == "Close" else target
+                if action == "Change status":
+                    new_s = target
                     if new_s != i["Status"]:
                         db.set_issue_fields(i["Id"], status=new_s)
                         db.add_update(i["Id"], user["Id"], "", f"{i['Status']} -> {new_s}")
@@ -869,6 +896,11 @@ def issue_detail(issue_id, user):
     lock = db.get_lock_owner(page_key)
     editable = lock is None or lock["UserId"] == user["Id"]
 
+    # Remind about the leadership brief once per Major issue per session.
+    if issue["IsMajor"] and not st.session_state.get(f"major_seen_{issue_id}"):
+        st.session_state[f"major_seen_{issue_id}"] = True
+        major_reminder_dialog(issue)
+
     h1, h2 = st.columns([6, 1], vertical_alignment="center")
     h1.subheader(f"#{issue['Id']} — {issue['Title']}")
     if not editable:
@@ -893,10 +925,17 @@ def issue_detail(issue_id, user):
         tickets += solventum_chip(issue["SolventumTicket"])
     if issue["ServiceDeskTicket"]:
         tickets += servicedesk_chip(issue["ServiceDeskTicket"])
+    coverage = ""
+    if issue.get("RegionsChecked"):
+        coverage += chip(f"Regions checked: {issue['RegionsChecked']}", NEUTRAL)
+    if issue["Status"] == "Closed" and issue.get("FixAppliedAllRegions"):
+        _rollout = {"Has been": "#388e3c", "Will be": "#1976d2", "No": "#d32f2f"}
+        coverage += chip(f"All regions: {issue['FixAppliedAllRegions']}",
+                         _rollout.get(issue["FixAppliedAllRegions"], NEUTRAL))
     st.markdown(
         (chip("🚩 Major", "#d32f2f") if issue["IsMajor"] else "")
         + chip(issue["Status"], STATUS_COLORS.get(issue["Status"], NEUTRAL))
-        + due_chip(issue) + tickets
+        + due_chip(issue) + tickets + coverage
         + f"<p class='issue-meta'>Reported by {html.escape(issue['ReportedByName'])} on "
         f"{fmt_dt(issue['CreatedAt'])} ({_rel_time(issue['CreatedAt'])}) · assigned to "
         f"{html.escape(issue['AssignedToName'] or 'no one')}</p>",
@@ -904,6 +943,42 @@ def issue_detail(issue_id, user):
     )
     with st.container(border=True):
         st.markdown(issue["Description"])
+
+    if issue["IsMajor"]:
+        with st.container(border=True):
+            st.markdown("**🚩 Major issue brief** <span class='issue-meta'>(for leadership)</span>",
+                        unsafe_allow_html=True)
+            brief_fields = [("Impact", "Impact", "Who/what is affected, and how badly."),
+                            ("Other regions affected", "OtherRegionsAffected",
+                             "Are other regions affected? Which?"),
+                            ("Current action", "CurrentAction",
+                             "What's being done right now to fix it.")]
+            if editable:
+                with st.form(f"brief_{issue_id}"):
+                    vals = {key: st.text_area(label, value=issue.get(key) or "", height=80,
+                                              placeholder=ph)
+                            for label, key, ph in brief_fields}
+                    if st.form_submit_button("Save brief", type="primary"):
+                        brief_edits = [{"field": label, "old": issue.get(key) or "",
+                                        "new": vals[key].strip()}
+                                       for label, key, _ in brief_fields
+                                       if vals[key].strip() != (issue.get(key) or "")]
+                        if brief_edits:
+                            db.set_issue_fields(
+                                issue_id, impact=vals["Impact"].strip() or None,
+                                other_regions_affected=vals["OtherRegionsAffected"].strip() or None,
+                                current_action=vals["CurrentAction"].strip() or None)
+                            db.add_update(issue_id, user["Id"], "", None, json.dumps(brief_edits))
+                            st.toast("Brief saved.")
+                            st.rerun()
+                        else:
+                            st.info("No changes to save.")
+            else:
+                for label, key, _ in brief_fields:
+                    val = issue.get(key)
+                    st.markdown(f"**{label}:** {html.escape(val) if val else '_—_'}",
+                                unsafe_allow_html=True)
+
     if editable and st.button("💡 Propose Fix"):
         propose_fix_dialog(issue, user)
 
@@ -974,9 +1049,8 @@ def issue_detail(issue_id, user):
                          "enter it in the field above and save again.")
             elif not comment.strip() and not status_change and not edits:
                 st.error("Enter an update, or change the status/details.")
-            elif ((new_major or issue["IsMajor"]) and status_change
-                  and new_status == "Closed"):
-                st.session_state.pending_major_close = {
+            elif status_change and new_status == "Closed":
+                st.session_state.pending_close = {
                     "issue_id": issue_id, "new_status": new_status,
                     "status_change": status_change, "comment": comment.strip(),
                     "assignee_id": names.get(new_assignee),
@@ -985,7 +1059,7 @@ def issue_detail(issue_id, user):
                     "regions": new_regions, "facilities": new_facilities,
                     "is_major": new_major, "due": new_due, "edits": edits,
                 }
-                major_close_dialog(user)
+                close_region_dialog(user)
             else:
                 db.set_issue_fields(issue_id, status=new_status,
                                     assigned_to=names.get(new_assignee),
