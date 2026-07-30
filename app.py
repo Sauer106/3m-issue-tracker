@@ -11,7 +11,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -1399,7 +1399,7 @@ def project_detail(project_id, user):
             color = EVENT_COLORS.get(e["Category"], NEUTRAL)
             when = f"{e['EventDate']:%b %d, %Y}"
             if e["EventTime"]:
-                when += f" · {e['EventTime']:%#I:%M %p}"
+                when += f" · {_time_range(e['EventTime'], e['EndTime'])}"
             if e["EndDate"] and e["EndDate"] != e["EventDate"]:
                 when += f" → {e['EndDate']:%b %d}"
             ec1, ec2 = st.columns([6, 1], vertical_alignment="center")
@@ -1540,6 +1540,25 @@ _CAL_CSS = """
 # Short, class-safe codes for the per-category button border colors above.
 CAT_CODE = {"Go-Live": "gl", "Deadline": "dl", "Projected Go-Live": "pgl", "Testing Event": "te"}
 
+# 12-hour time picker options (15-minute slots) and weekday labels for events.
+TIME_SLOTS = [time(h, m) for h in range(24) for m in (0, 15, 30, 45)]
+TIME_LABELS = [t.strftime("%I:%M %p").lstrip("0") for t in TIME_SLOTS]
+LABEL_TO_TIME = dict(zip(TIME_LABELS, TIME_SLOTS))
+WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # Mon=0, matches date.weekday()
+
+
+def _time_label(t):
+    """A stored time -> its 12-hour label (added to the option list if off-grid)."""
+    return t.strftime("%I:%M %p").lstrip("0") if t else None
+
+
+def _time_range(t_start, t_end):
+    """'2:00 PM' or '2:00 PM – 4:00 PM' or '' when there's no start time."""
+    if not t_start:
+        return ""
+    s = _time_label(t_start)
+    return f"{s} – {_time_label(t_end)}" if t_end else s
+
 
 def _render_month_grid(weeks, month, events_by_day, today, user):
     """Native, in-place calendar grid: each event is a button that opens its dialog."""
@@ -1597,11 +1616,18 @@ def _event_form(user, event):
         st.session_state[pfx + "cat"] = (event["Category"] if is_edit and event["Category"]
                                          in EVENT_CATEGORIES else "Go-Live")
         st.session_state[pfx + "settime"] = bool(is_edit and event["EventTime"])
-        st.session_state[pfx + "time"] = (event["EventTime"] if (is_edit and event["EventTime"])
-                                          else datetime.now().time().replace(second=0, microsecond=0))
+        start_lbl = _time_label(event["EventTime"]) if (is_edit and event["EventTime"]) else "9:00 AM"
+        st.session_state[pfx + "time"] = start_lbl if start_lbl in LABEL_TO_TIME else "9:00 AM"
+        end_lbl = _time_label(event["EndTime"]) if (is_edit and event.get("EndTime")) else "—"
+        st.session_state[pfx + "endtime"] = end_lbl if end_lbl in LABEL_TO_TIME else "—"
         st.session_state[pfx + "multi"] = bool(is_edit and event["EndDate"])
         st.session_state[pfx + "end"] = (event["EndDate"] if (is_edit and event["EndDate"])
                                          else st.session_state[pfx + "date"])
+        if is_edit and event.get("Weekdays"):
+            st.session_state[pfx + "weekdays"] = [WEEKDAY_LABELS[i] for i in json.loads(event["Weekdays"])
+                                                  if 0 <= i < 7]
+        else:
+            st.session_state[pfx + "weekdays"] = list(WEEKDAY_LABELS)
         st.session_state[pfx + "desc"] = (event["Description"] if is_edit and event["Description"] else "")
         if is_edit:
             sel = [id_to_label[e["Id"]] for e in db.list_event_projects(event["Id"])
@@ -1621,12 +1647,22 @@ def _event_form(user, event):
     c2.selectbox("Category", EVENT_CATEGORIES, key=pfx + "cat")
     category = st.session_state[pfx + "cat"]
     t1, t2 = st.columns(2)
-    set_time = t1.checkbox("Set a start time", key=pfx + "settime")
-    etime = (t1.time_input("Start time", key=pfx + "time", label_visibility="collapsed")
-             if set_time else None)
-    multi = t2.checkbox("Multi-day (end date)", key=pfx + "multi")
-    end_date = (t2.date_input("End date", key=pfx + "end", label_visibility="collapsed")
-                if multi else None)
+    set_time = t1.checkbox("Set a time", key=pfx + "settime")
+    multi = t2.checkbox("Multi-day (date range)", key=pfx + "multi")
+    etime = end_time = None
+    if set_time:
+        ts1, ts2 = st.columns(2)
+        etime = LABEL_TO_TIME[ts1.selectbox("Start time", TIME_LABELS, key=pfx + "time")]
+        end_time = LABEL_TO_TIME.get(ts2.selectbox("End time (optional)", ["—"] + TIME_LABELS,
+                                                   key=pfx + "endtime"))
+    end_date = None
+    weekdays = None
+    if multi:
+        md1, md2 = st.columns(2)
+        end_date = md1.date_input("End date", key=pfx + "end")
+        wd = md2.multiselect("Days of week", WEEKDAY_LABELS, key=pfx + "weekdays")
+        idxs = sorted(WEEKDAY_LABELS.index(x) for x in wd)
+        weekdays = idxs if 0 < len(idxs) < 7 else None   # only store a real subset
     resourced = st.multiselect("Resource(s) — required", list(user_labels), key=pfx + "resources")
     picked = st.multiselect("Linked projects", list(proj_labels), key=pfx + "projects")
     description = st.text_area("Description", key=pfx + "desc", height=100)
@@ -1639,20 +1675,26 @@ def _event_form(user, event):
         if not resourced:
             st.error("At least one resource is required.")
             return
+        if set_time and end_time and end_time <= etime:
+            st.error("End time must be after the start time.")
+            return
         if multi and end_date and end_date < edate:
             st.error("End date can't be before the start date.")
             return
         pids = [proj_labels[lbl] for lbl in picked]
         rids = [user_labels[lbl] for lbl in resourced]
+        wd_json = json.dumps(weekdays) if (multi and weekdays) else None
         if is_edit:
             db.update_event(event["Id"], title.strip(), edate, etime, end_date if multi else None,
-                            category, description.strip() or None, pids, rids)
+                            category, description.strip() or None, pids, rids,
+                            end_time=end_time, weekdays=wd_json)
             db.audit(user["Id"], "update_event", f"#{event['Id']} {title.strip()}")
             st.toast("Event updated.")
         else:
             eid = db.create_event(title.strip(), edate, user["Id"], etime,
                                   end_date if multi else None, category,
-                                  description.strip() or None, pids, rids)
+                                  description.strip() or None, pids, rids,
+                                  end_time=end_time, weekdays=wd_json)
             db.audit(user["Id"], "create_event", f"#{eid} {title.strip()}")
             st.toast("Event created.")
         for k in [k for k in st.session_state if k.startswith(pfx)]:
@@ -1689,7 +1731,7 @@ def _render_event_readonly(event):
     color = EVENT_COLORS.get(event["Category"], NEUTRAL)
     when = f"{event['EventDate']:%A, %B %d, %Y}"
     if event["EventTime"]:
-        when += f" at {event['EventTime']:%#I:%M %p}"
+        when += f" at {_time_range(event['EventTime'], event['EndTime'])}"
     if event["EndDate"] and event["EndDate"] != event["EventDate"]:
         when += f" → {event['EndDate']:%B %d, %Y}"
     st.markdown(f"{chip(event['Category'], color)} **{html.escape(event['Title'])}**",
@@ -1772,9 +1814,11 @@ def page_calendar(user, config):
     events_by_day = {}
     for e in db.list_events(grid_start, grid_end):
         end = e["EndDate"] or e["EventDate"]
+        wds = set(json.loads(e["Weekdays"])) if e.get("Weekdays") else None
         d = max(e["EventDate"], grid_start)
         while d <= min(end, grid_end):
-            events_by_day.setdefault(d, []).append(e)
+            if wds is None or d.weekday() in wds:
+                events_by_day.setdefault(d, []).append(e)
             d += timedelta(days=1)
     for d in events_by_day:
         events_by_day[d].sort(key=lambda e: e["EventTime"] or midnight)
@@ -1799,7 +1843,7 @@ def page_calendar(user, config):
             color = EVENT_COLORS.get(obj["Category"], NEUTRAL)
             when = f"{d:%a %b %d}"
             if obj["EventTime"]:
-                when += f" · {obj['EventTime']:%#I:%M %p}"
+                when += f" · {_time_range(obj['EventTime'], obj['EndTime'])}"
             if obj["EndDate"] and obj["EndDate"] != d:
                 when += f" → {obj['EndDate']:%b %d}"
             links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
@@ -1925,7 +1969,7 @@ def page_dashboard(user, config):
                 color = EVENT_COLORS.get(e["Category"], NEUTRAL)
                 when = f"{e['EventDate']:%a %b %d}"
                 if e["EventTime"]:
-                    when += f" · {e['EventTime']:%#I:%M %p}"
+                    when += f" · {_time_range(e['EventTime'], e['EndTime'])}"
                 links = "".join(chip(l["Title"], PROJECT_TARGET_COLOR)
                                 for l in db.list_event_projects(e["Id"]))
                 u1.markdown(f"{chip(e['Category'], color)} <b>{html.escape(e['Title'])}</b>"

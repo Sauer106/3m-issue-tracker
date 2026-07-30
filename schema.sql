@@ -383,8 +383,10 @@ BEGIN
         Title       NVARCHAR(200) NOT NULL,
         EventDate   DATE NOT NULL,
         EventTime   TIME NULL,            -- optional start time
+        EndTime     TIME NULL,            -- optional end time
         EndDate     DATE NULL,            -- optional multi-day end (inclusive)
-        Category    NVARCHAR(30) NOT NULL DEFAULT 'Other',  -- Milestone / Meeting / Go-Live / Deadline / Other
+        Weekdays    NVARCHAR(50) NULL,    -- JSON list of weekday ints (Mon=0) a multi-day event applies to
+        Category    NVARCHAR(30) NOT NULL DEFAULT 'Other',  -- Go-Live / Deadline / Projected Go-Live / Testing Event
         Description NVARCHAR(MAX) NULL,
         CreatedBy   INT NOT NULL REFERENCES dbo.Users(Id),
         CreatedAt   DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
@@ -479,6 +481,14 @@ BEGIN
         CONSTRAINT PK_CalendarEventResources PRIMARY KEY (EventId, UserId)
     );
 END
+GO
+
+-- Upgrade: event end time + day-of-week filter for multi-day ranges.
+IF COL_LENGTH('dbo.CalendarEvents', 'EndTime') IS NULL
+    ALTER TABLE dbo.CalendarEvents ADD EndTime TIME NULL;
+GO
+IF COL_LENGTH('dbo.CalendarEvents', 'Weekdays') IS NULL
+    ALTER TABLE dbo.CalendarEvents ADD Weekdays NVARCHAR(50) NULL;
 GO
 
 -- The app and email scripts run as SYSTEM via Task Scheduler; grant it access.

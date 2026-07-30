@@ -621,12 +621,14 @@ def list_project_updates(project_id):
 # ---------------------------------------------------------------- calendar
 
 def create_event(title, event_date, created_by, event_time=None, end_date=None,
-                 category="Other", description=None, project_ids=None, resource_ids=None):
+                 category="Other", description=None, project_ids=None, resource_ids=None,
+                 end_time=None, weekdays=None):
     event_id = insert_returning_id(
-        """INSERT INTO CalendarEvents (Title, EventDate, EventTime, EndDate, Category,
-                                       Description, CreatedBy)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (title, event_date, event_time, end_date, category, description, created_by),
+        """INSERT INTO CalendarEvents (Title, EventDate, EventTime, EndTime, EndDate, Weekdays,
+                                       Category, Description, CreatedBy)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (title, event_date, event_time, end_time, end_date, weekdays, category, description,
+         created_by),
     )
     set_event_projects(event_id, project_ids or [])
     set_event_resources(event_id, resource_ids or [])
@@ -634,11 +636,14 @@ def create_event(title, event_date, created_by, event_time=None, end_date=None,
 
 
 def update_event(event_id, title, event_date, event_time=None, end_date=None,
-                 category="Other", description=None, project_ids=None, resource_ids=None):
+                 category="Other", description=None, project_ids=None, resource_ids=None,
+                 end_time=None, weekdays=None):
     execute(
-        """UPDATE CalendarEvents SET Title = ?, EventDate = ?, EventTime = ?, EndDate = ?,
-                  Category = ?, Description = ?, UpdatedAt = SYSDATETIME() WHERE Id = ?""",
-        (title, event_date, event_time, end_date, category, description, event_id),
+        """UPDATE CalendarEvents SET Title = ?, EventDate = ?, EventTime = ?, EndTime = ?,
+                  EndDate = ?, Weekdays = ?, Category = ?, Description = ?,
+                  UpdatedAt = SYSDATETIME() WHERE Id = ?""",
+        (title, event_date, event_time, end_time, end_date, weekdays, category, description,
+         event_id),
     )
     if project_ids is not None:
         set_event_projects(event_id, project_ids)
