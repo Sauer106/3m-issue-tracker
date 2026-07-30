@@ -1318,56 +1318,64 @@ def project_detail(project_id, user):
 
 _CAL_CSS = """
 <style>
-.cal { width:100%; border-collapse:collapse; table-layout:fixed; margin-top:0.4rem; }
-.cal-th { padding:6px 6px; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em;
-          color:rgba(128,128,128,0.9); border-bottom:2px solid rgba(128,128,128,0.25); text-align:left; }
-.cal-cell { height:6.4rem; width:14.28%; vertical-align:top; border:1px solid rgba(128,128,128,0.18);
-            padding:3px 4px; overflow:hidden; }
-.cal-dim { background:rgba(128,128,128,0.06); }
-.cal-dim .cal-daynum { opacity:0.4; }
-.cal-today { outline:2px solid #ff4b4b; outline-offset:-2px; }
-.cal-daynum { font-size:0.78rem; font-weight:600; margin-bottom:2px; color:rgba(128,128,128,0.95); }
-.cal-ev { font-size:0.7rem; line-height:1.25; padding:1px 5px; margin-bottom:2px; border-radius:3px;
-          background:rgba(128,128,128,0.10); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.cal-ev-link { display:block; text-decoration:none; color:inherit; cursor:pointer; }
-.cal-ev-link:hover .cal-ev { background:rgba(255,75,75,0.18); }
+.cal-th { padding:4px 2px; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.03em;
+          color:rgba(128,128,128,0.9); font-weight:600; }
+.cal-daynum { font-size:0.8rem; font-weight:600; color:rgba(128,128,128,0.95); margin-bottom:1px; }
+.cal-daynum.cal-dim { opacity:0.4; }
+.cal-daynum.cal-today { color:#ff4b4b; }
 .cal-more { font-size:0.66rem; color:rgba(128,128,128,0.8); padding-left:2px; }
 .cal-legend { margin:0.6rem 0 0.2rem; font-size:0.78rem; color:rgba(128,128,128,0.9); }
 .cal-leg { margin-right:1rem; white-space:nowrap; }
 .cal-dot { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px;
            vertical-align:middle; }
+/* Day cells: tighten the bordered container into a calendar box */
+[class*="st-key-calcell_"] { min-height:6.2rem; padding:3px 5px !important; }
+[class*="st-key-calcell_today_"] { outline:2px solid #ff4b4b; outline-offset:-2px; }
+/* Event buttons: compact, left-aligned, colored left border per category */
+[class*="st-key-calbtn"] button {
+    min-height:0; height:auto; padding:1px 6px; margin-bottom:2px; width:100%;
+    font-size:0.7rem; font-weight:500; text-align:left; justify-content:flex-start;
+    line-height:1.25; border:1px solid rgba(128,128,128,0.2); border-radius:3px; }
+[class*="st-key-calbtn"] button p { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0; }
+[class*="st-key-calbtngl_"] button { border-left:3px solid #388e3c; }
+[class*="st-key-calbtndl_"] button { border-left:3px solid #d32f2f; }
+[class*="st-key-calbtnpgl_"] button { border-left:3px solid #f57c00; }
 </style>
 """
 
-
-def _cal_chip(color, text, event_id):
-    """A calendar-cell event chip that links to itself via ?event=<id>."""
-    return (f"<a href='?event={event_id}' target='_self' class='cal-ev-link' "
-            f"title='{html.escape(text)}'>"
-            f"<div class='cal-ev' style='border-left:3px solid {color};'>"
-            f"{html.escape(text)}</div></a>")
+# Short, class-safe codes for the per-category button border colors above.
+CAT_CODE = {"Go-Live": "gl", "Deadline": "dl", "Projected Go-Live": "pgl"}
 
 
-def _calendar_grid(year, month, items_by_day, today):
-    cal = calendar.Calendar(firstweekday=6)  # Sunday first (US)
-    head = "".join(f"<th class='cal-th'>{d}</th>"
-                   for d in ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
-    body = ""
-    for week in cal.monthdatescalendar(year, month):
-        cells = ""
-        for day in week:
-            cls = "cal-cell"
-            if day.month != month:
-                cls += " cal-dim"
-            if day == today:
-                cls += " cal-today"
-            items = sorted(items_by_day.get(day, []), key=lambda x: x["sort"])
-            chips = "".join(it["chip"] for it in items[:4])
-            if len(items) > 4:
-                chips += f"<div class='cal-more'>+{len(items) - 4} more</div>"
-            cells += f"<td class='{cls}'><div class='cal-daynum'>{day.day}</div>{chips}</td>"
-        body += f"<tr>{cells}</tr>"
-    return f"<table class='cal'><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+def _render_month_grid(weeks, month, events_by_day, today, user):
+    """Native, in-place calendar grid: each event is a button that opens its dialog."""
+    st.markdown(_CAL_CSS, unsafe_allow_html=True)
+    hdr = st.columns(7, gap="small")
+    for i, name in enumerate(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]):
+        hdr[i].markdown(f"<div class='cal-th'>{name}</div>", unsafe_allow_html=True)
+    for week in weeks:
+        cols = st.columns(7, gap="small")
+        for i, day in enumerate(week):
+            iso = day.isoformat()
+            key = f"calcell_today_{iso}" if day == today else f"calcell_{iso}"
+            with cols[i].container(border=True, key=key):
+                cls = "cal-daynum" + ("" if day.month == month else " cal-dim") \
+                    + (" cal-today" if day == today else "")
+                st.markdown(f"<div class='{cls}'>{day.day}</div>", unsafe_allow_html=True)
+                day_events = events_by_day.get(day, [])
+                for e in day_events[:3]:
+                    code = CAT_CODE.get(e["Category"], "gl")
+                    label = (f"{e['EventTime']:%#I:%M} " if e["EventTime"] else "") + e["Title"]
+                    if len(label) > 26:
+                        label = label[:25] + "…"
+                    if st.button(label, key=f"calbtn{code}_{e['Id']}_{iso}",
+                                 use_container_width=True):
+                        for k in [k for k in st.session_state if k.startswith(f"ee{e['Id']}_")]:
+                            del st.session_state[k]
+                        event_detail_dialog(e, user)
+                if len(day_events) > 3:
+                    st.markdown(f"<div class='cal-more'>+{len(day_events) - 3} more</div>",
+                                unsafe_allow_html=True)
 
 
 def _cal_legend():
@@ -1546,19 +1554,17 @@ def page_calendar(user, config):
     grid_start, grid_end = weeks[0][0], weeks[-1][-1]
     midnight = datetime.min.time()
 
-    items_by_day = {}
+    events_by_day = {}
     for e in db.list_events(grid_start, grid_end):
-        color = EVENT_COLORS.get(e["Category"], NEUTRAL)
-        label = (f"{e['EventTime']:%#I:%M %p} " if e["EventTime"] else "") + e["Title"]
         end = e["EndDate"] or e["EventDate"]
         d = max(e["EventDate"], grid_start)
         while d <= min(end, grid_end):
-            items_by_day.setdefault(d, []).append(
-                {"sort": (d, e["EventTime"] or midnight),
-                 "chip": _cal_chip(color, label, e["Id"])})
+            events_by_day.setdefault(d, []).append(e)
             d += timedelta(days=1)
+    for d in events_by_day:
+        events_by_day[d].sort(key=lambda e: e["EventTime"] or midnight)
 
-    st.markdown(_CAL_CSS + _calendar_grid(year, month, items_by_day, today), unsafe_allow_html=True)
+    _render_month_grid(weeks, month, events_by_day, today, user)
     st.markdown(_cal_legend(), unsafe_allow_html=True)
 
     st.subheader(f"Agenda — {calendar.month_name[month]} {year}")
