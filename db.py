@@ -580,9 +580,11 @@ def delete_facility(facility_id):
 # ---------------------------------------------------------------- audit log
 
 def audit(actor_id, action, detail=None):
-    """Record an accountability-relevant action (deletions, admin actions)."""
-    execute("INSERT INTO AuditLog (ActorId, Action, Detail) VALUES (?, ?, ?)",
-            (actor_id, action, (detail or "")[:400]))
+    """Record an accountability-relevant action (deletions, admin actions).
+    Returns the new AuditLog Id (callers that don't need it can ignore it)."""
+    return insert_returning_id(
+        "INSERT INTO AuditLog (ActorId, Action, Detail) OUTPUT INSERTED.Id VALUES (?, ?, ?)",
+        (actor_id, action, (detail or "")[:400]))
 
 
 def list_audit(limit=200):

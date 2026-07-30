@@ -3,9 +3,12 @@
 Run with:  streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 """
 import csv
+import glob
 import html
 import io
 import json
+import os
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -38,6 +41,42 @@ APP_VERSION = "1.1.0"
 REPO_URL = "https://github.com/Sauer106/3m-issue-tracker"
 PY_VERSION = "%d.%d.%d" % sys.version_info[:3]
 ST_VERSION = st.__version__
+BACKUP_DIR = r"C:\SQLBackups\IssueTracker"
+
+
+def _build_info():
+    """(short_sha, deploy_date) read straight from .git — no git binary needed,
+    so it works under the SYSTEM scheduled task. Best-effort: (None, None) if it
+    can't be determined. The ref's mtime is when this commit was checked out here,
+    i.e. the deploy date."""
+    try:
+        gitdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".git")
+        head = open(os.path.join(gitdir, "HEAD"), encoding="utf-8").read().strip()
+        if head.startswith("ref:"):
+            ref = head.split(" ", 1)[1].strip()
+            ref_path = os.path.join(gitdir, *ref.split("/"))
+            if os.path.exists(ref_path):
+                sha = open(ref_path, encoding="utf-8").read().strip()
+                stamp = os.path.getmtime(ref_path)
+            else:  # ref is packed
+                sha = stamp = None
+                packed = os.path.join(gitdir, "packed-refs")
+                for line in open(packed, encoding="utf-8"):
+                    if line.rstrip().endswith(ref):
+                        sha, stamp = line.split()[0], os.path.getmtime(packed)
+                        break
+        else:  # detached HEAD
+            sha, stamp = head, os.path.getmtime(os.path.join(gitdir, "HEAD"))
+        if not sha:
+            return (None, None)
+        date = datetime.fromtimestamp(stamp).strftime("%b %d") if stamp else None
+        return (sha[:7], date)
+    except Exception:  # noqa: BLE001 - build stamp is cosmetic
+        return (None, None)
+
+
+BUILD_SHA, BUILD_DATE = _build_info()
+BUILD_STR = (f"{BUILD_SHA} ({BUILD_DATE})" if BUILD_DATE else BUILD_SHA) if BUILD_SHA else None
 
 
 STATUS_COLORS = {"Open": "#1976d2", "In Progress": "#7b1fa2", "Resolved": "#388e3c", "Closed": "#616161",
@@ -1289,8 +1328,85 @@ def page_dashboard(user, config):
 
 # ---------------------------------------------------------------- admin
 
+def _last_backup_info():
+    """(newest_datetime, age_hours, file_count, total_mb) for the DB backups,
+    or None if the folder is missing/empty. Best-effort."""
+    try:
+        files = glob.glob(os.path.join(BACKUP_DIR, "IssueTracker_*.bak"))
+        if not files:
+            return None
+        newest_path = max(files, key=os.path.getmtime)
+        newest = datetime.fromtimestamp(os.path.getmtime(newest_path))
+        age_h = (datetime.now() - newest).total_seconds() / 3600
+        total_mb = sum(os.path.getsize(f) for f in files) / (1024 * 1024)
+        return (newest, age_h, len(files), total_mb)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _task_status():
+    """Status line for each scheduled task via schtasks. Best-effort; slow enough
+    to gate behind a button."""
+    tasks = ["IssueTracker App", "IssueTracker Reminders", "IssueTracker Weekly Digest",
+             "IssueTracker Project Digest", "IssueTracker DB Backup"]
+    out = []
+    for t in tasks:
+        try:
+            r = subprocess.run(["schtasks", "/Query", "/TN", t, "/FO", "LIST"],
+                               capture_output=True, text=True, timeout=10)
+            status = "not found"
+            for line in r.stdout.splitlines():
+                if line.strip().startswith("Status:"):
+                    status = line.split(":", 1)[1].strip()
+                    break
+            out.append(f"**{t}** — {status}")
+        except Exception as exc:  # noqa: BLE001
+            out.append(f"**{t}** — error: {exc}")
+    return out
+
+
+def render_diagnostics():
+    diag = db.env_diagnostics()
+
+    st.markdown("**Application**")
+    st.markdown(
+        f"- Version **v{APP_VERSION}** · build `{BUILD_STR or 'unknown'}`\n"
+        f"- Python `{PY_VERSION}` · Streamlit `{ST_VERSION}` · pyodbc `{diag['pyodbc']}`\n"
+        f"- Server time {datetime.now():%Y-%m-%d %I:%M %p} ({SERVER_TZ.key})"
+    )
+
+    st.markdown("**Database**")
+    drivers = ", ".join(diag["installed_drivers"]) or "none detected"
+    st.markdown(
+        f"- Configured driver: `{diag['configured_driver']}`\n"
+        f"- Installed ODBC (SQL Server): {drivers}\n"
+        f"- SQL Server: {diag['sql_server']}"
+    )
+
+    st.markdown("**Backups**")
+    info = _last_backup_info()
+    if info:
+        newest, age_h, count, total_mb = info
+        flag = " ⚠️ stale (>26h)" if age_h > 26 else " ✅"
+        st.markdown(
+            f"- Latest {newest:%Y-%m-%d %I:%M %p} ({age_h:.0f}h ago){flag}\n"
+            f"- {count} file(s), {total_mb:.0f} MB in `{BACKUP_DIR}`"
+        )
+    else:
+        st.markdown(f"- No backups found in `{BACKUP_DIR}`.")
+
+    st.markdown("**Scheduled tasks**")
+    if st.button("Check task status", key="diag_tasks"):
+        st.session_state.diag_tasks = _task_status()
+    for line in st.session_state.get("diag_tasks", []):
+        st.markdown(f"- {line}")
+
+
 def page_admin(user, config):
     st.header("Admin — User Management")
+
+    with st.expander("🩺 System diagnostics", expanded=False):
+        render_diagnostics()
 
     with st.expander("Create a new user", expanded=False):
         with st.form("create_user", clear_on_submit=True):
@@ -1795,7 +1911,8 @@ def help_dialog():
 def _env_block():
     """A best-effort environment summary appended to bug-report emails, so admins
     can see the stack (Python/Streamlit/pyodbc/ODBC driver/SQL Server) at a glance."""
-    lines = [f"App v{APP_VERSION} &middot; Python {PY_VERSION} &middot; Streamlit {ST_VERSION}"]
+    build = f" &middot; build {BUILD_STR}" if BUILD_STR else ""
+    lines = [f"App v{APP_VERSION}{build} &middot; Python {PY_VERSION} &middot; Streamlit {ST_VERSION}"]
     try:
         diag = db.env_diagnostics()
         drivers = ", ".join(diag["installed_drivers"]) or "none detected"
@@ -1809,61 +1926,86 @@ def _env_block():
             f'<b>Environment</b><br>{"<br>".join(lines)}</span>')
 
 
-def _submit_bug_report(user, where, what, steps):
-    """Email active administrators the bug report and record it in the audit log.
-    Best-effort: returns True if the email was sent, False if it was only logged."""
+def _submit_bug_report(user, where, severity, what, steps, attachment=None):
+    """Email active administrators (and the reporter, as a receipt) the bug report
+    and record it in the audit log. Best-effort: returns (report_id, sent) where
+    sent is True if the email went out, False if it was only logged.
+    `attachment` is an optional (filename, content_type, bytes) tuple."""
     config = db.get_config()
-    detail = f"[{where}] {what}" + (f" | Steps: {steps}" if steps else "")
+    detail = f"[{severity} | {where}] {what}" + (f" | Steps: {steps}" if steps else "")
+    report_id = None
     try:
-        db.audit(user["Id"], "Bug report", detail)
+        report_id = db.audit(user["Id"], "Bug report", detail)
     except Exception as exc:  # noqa: BLE001 - logging is best-effort
         print(f"bug report: audit failed: {exc}")
 
     admins = [u for u in db.list_users(active_only=True) if u["IsAdmin"] and u["Email"]]
     if not admins:
-        return False
+        return (report_id, False)
 
     reporter = f"{user['DisplayName']} ({user.get('Email') or 'no email on file'})"
     what_html = html.escape(what).replace("\n", "<br>")
-    body = (f"<b>Reporter:</b> {html.escape(reporter)}<br>"
+    ref_line = f"<b>Report #:</b> {report_id}<br>" if report_id else ""
+    body = (f"{ref_line}"
+            f"<b>Reporter:</b> {html.escape(reporter)}<br>"
+            f"<b>Severity:</b> {html.escape(severity)}<br>"
             f"<b>Where:</b> {html.escape(where)}<br><br>"
             f"<b>What happened</b><br>{what_html}")
     if steps:
         body += f"<br><br><b>Steps to reproduce</b><br>{html.escape(steps).replace(chr(10), '<br>')}"
+    if attachment:
+        body += "<br><br><i>Screenshot attached.</i>"
     body += "<br><br>" + _env_block()
     inner = es.intro_row(body)
     app_url = config["app"].get("app_url", "")
-    subject = f"3M Tracker bug report — {where}"
+    ref = f"#{report_id} " if report_id else ""
+    subject = f"3M Tracker bug report {ref}— {severity.split(' ')[0]} — {where}"
     body_html = es.shell("Bug report", inner, app_url,
                          "This is an automated bug report from the 3M Issues &amp; Projects Tracker.",
                          button_text="Open the Tracker")
+    # The reporter gets a copy as a receipt.
+    recipients = [a["Email"] for a in admins]
+    if user.get("Email") and user["Email"] not in recipients:
+        recipients.append(user["Email"])
     try:
-        mailer.send_email(config, [a["Email"] for a in admins], subject, body_html)
-        return True
+        mailer.send_email(config, recipients, subject, body_html,
+                          attachments=[attachment] if attachment else None)
+        return (report_id, True)
     except Exception as exc:  # noqa: BLE001 - never break the reporting flow
         print(f"bug report: email failed: {exc}")
-        return False
+        return (report_id, False)
 
 
 @st.dialog("Report a Bug", width="large")
 def bug_report_dialog(user):
-    st.markdown("Tell us what went wrong. This goes straight to the administrators.")
+    st.markdown("Tell us what went wrong. This goes straight to the administrators, "
+                "and you'll get a copy for your records.")
     places = ["Issues", "Projects", "Dashboard", "Admin", "Login / sign-in", "Emails", "Other"]
     current = st.session_state.get("page")
-    where = st.selectbox("Where did it happen?", places,
+    c1, c2 = st.columns(2)
+    where = c1.selectbox("Where did it happen?", places,
                          index=places.index(current) if current in places else 0)
+    severity = c2.selectbox("How bad is it?",
+                            ["Blocking — can't work", "Annoying — has a workaround",
+                             "Cosmetic — minor"])
     what = st.text_area("What happened?", height=140,
                         placeholder="Describe the problem. What did you expect, and what "
                                     "happened instead?")
     steps = st.text_area("Steps to reproduce (optional)", height=100,
                          placeholder="1. ...\n2. ...")
+    shot = st.file_uploader("Screenshot (optional)", type=["png", "jpg", "jpeg", "gif"])
     if st.button("Send Report", type="primary", use_container_width=True):
         if not what.strip():
             st.error("Please describe what happened.")
         else:
-            sent = _submit_bug_report(user, where, what.strip(), steps.strip())
-            st.toast("Report sent to the administrators." if sent
-                     else "Report recorded for the administrators.")
+            attachment = None
+            if shot is not None:
+                attachment = (shot.name, shot.type or "application/octet-stream", shot.getvalue())
+            report_id, sent = _submit_bug_report(user, where, severity, what.strip(),
+                                                 steps.strip(), attachment)
+            ref = f" (report #{report_id})" if report_id else ""
+            st.toast(f"Report sent to the administrators{ref}." if sent
+                     else f"Report recorded for the administrators{ref}.")
             st.rerun()
 
 
@@ -1873,6 +2015,7 @@ def render_footer():
     login/2FA screen) was just drawn, since Streamlit paints in call order."""
     user = st.session_state.get("user")
     year = datetime.now().year
+    build_meta = f" <span class='sep'>•</span> build {BUILD_STR}" if BUILD_STR else ""
     st.markdown(
         """
         <style>
@@ -1929,7 +2072,7 @@ def render_footer():
             <a href="{REPO_URL}" target="_blank" rel="noopener">Michael Sauer</a>
             <span class='sep'>•</span> &copy; {year}
             <div class='app-footer-meta'>Python {PY_VERSION}
-                <span class='sep'>•</span> Streamlit {ST_VERSION}</div>
+                <span class='sep'>•</span> Streamlit {ST_VERSION}{build_meta}</div>
         </div>
         """,
         unsafe_allow_html=True,
