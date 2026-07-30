@@ -146,8 +146,14 @@ Verify: `https://3mtracking.uhsinc.com` returns 200, the RD Web URL still return
 |---|---|---|
 | IssueTracker App | At startup | Streamlit, headless, port 8501 (+TLS flags when enabled) |
 | IssueTracker Reminders | Thu 9:00 AM | Nags owners of Open/In Progress issues with no update this week |
-| IssueTracker Weekly Digest | Fri 7:00 AM | Digest of the Thu-2PM-to-Thu-2PM reporting week to all active users |
+| IssueTracker Weekly Digest | Fri 7:00 AM | Issue digest of the Thu-2PM-to-Thu-2PM reporting week |
+| IssueTracker Project Digest | Fri 7:05 AM | Project digest (active + completed this week) |
 | IssueTracker DB Backup | Daily 2:00 AM | `backup_db.ps1` → `C:\SQLBackups\IssueTracker`, verified, 14-day retention |
+
+Digest/reminder recipients are managed in-app (Admin → Email recipients), not in
+config. For an off-site backup copy, edit the DB Backup task to add
+`-OffsiteDir "\\server\share\IssueTracker"` (the SYSTEM/computer account needs write
+access to that share).
 
 Restart the app after code/config changes:
 `schtasks /End /TN "IssueTracker App"` then `schtasks /Run /TN "IssueTracker App"`.
@@ -160,20 +166,42 @@ The email scripts are safe to re-run manually (they check `EmailLog` first).
   login. 5 failed attempts lock an account for 15 minutes. Sessions persist across
   refreshes via a signed 12-hour cookie.
 - **Admin page:** create users, reset passwords, reset 2FA, activate/deactivate,
-  promote/demote admins (not yourself), and manage the Regions & Facilities lists
-  (seeded once by `schema.sql`, DB-managed thereafter).
+  promote/demote admins (not yourself); manage Regions & Facilities (seeded once by
+  `schema.sql`, DB-managed thereafter); manage email recipients; reassign a person's
+  open work in bulk; email test/send tools; recycle bin (restore/purge); audit log.
 - **Issues:** status Open / In Progress / Waiting on Solventum (requires a Solventum
   ticket #) / Hold / Closed; Major flag (closing a Major issue forces the
-  "applied to all regions?" prompt); fix proposals with accept/decline by the
-  assigned analyst (accept moves the issue to In Progress); Solventum + ServiceDesk
-  ticket badges; region/facility tagging; attachments (25 MB each, stored in the DB).
+  "applied to all regions?" prompt); optional due date (overdue badge); fix proposals
+  with accept/decline by the assigned analyst (accept moves the issue to In Progress);
+  Solventum + ServiceDesk ticket badges; region/facility tagging; attachments (25 MB
+  each, stored in the DB); a "Needs update" filter and a "Bulk actions" panel.
 - **Projects:** same shape, own lifecycle (Planned / In Progress / On Hold /
   Completed / Cancelled).
+- **Dashboard:** metrics, aging, and bar charts (by status/region/assignee), plus
+  CSV export of issues and projects. Visible to all users.
+- **Notifications:** immediate emails on assignment and on `@username` mentions;
+  every email button deep-links to the exact item (via `?page=/?issue=/?project=/`
+  query params the app reads on load).
+- **Soft-delete:** deleting an issue/project moves it to the recycle bin; deletions,
+  restores, and purges (plus admin actions) are recorded in the audit log.
 - **Collaboration:** lists and histories live-refresh; presence chips show who else
   is viewing; first viewer holds the edit lock, others are read-only; idle holders
   (10 min without interacting) lose the lock to a waiting viewer; admins can take
   a lock over. Every field change is audited in the item's history with author and
   old → new values.
+- **Reporting views:** `vw_IssuesFlat`, `vw_IssuesByRegion`, `vw_IssuesByFacility`,
+  `vw_ProjectsFlat` flatten the JSON tags for Grafana/BI (point it at the DB with a
+  read-only login). `[servicedesk]` config + `servicedesk.py` scaffold a future
+  read-only CA SDM pull (pending API access).
+
+## 6. Tests
+
+DB-free unit tests (auth, reporting date math, email rendering) live in `tests/`.
+Install and run:
+```powershell
+.\venv\Scripts\pip install -r requirements-dev.txt
+.\venv\Scripts\python -m pytest
+```
 
 ## Troubleshooting
 

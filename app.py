@@ -18,6 +18,7 @@ import streamlit.components.v1 as components
 import auth
 import db
 import mailer
+import notify
 import reporting
 import send_digest
 import send_project_digest
@@ -53,6 +54,20 @@ def solventum_chip(text):
 def servicedesk_chip(text):
     return (f"<span class='chip' style='background:#cfe8ff; color:#0d47a1; "
             f"border:1px solid #1565c0'>{html.escape(str(text))}</span>")
+
+
+def is_overdue(issue):
+    d = issue.get("DueDate")
+    return bool(d and issue["Status"] != "Closed" and d < datetime.now().date())
+
+
+def due_chip(issue):
+    d = issue.get("DueDate")
+    if not d:
+        return ""
+    if is_overdue(issue):
+        return chip(f"⏰ Overdue {d:%b %d}", "#d32f2f")
+    return chip(f"Due {d:%b %d}", "#607d8b")
 
 
 AVATAR_COLORS = ["#1976d2", "#7b1fa2", "#388e3c", "#f57c00", "#d32f2f", "#00796b", "#5d4037", "#455a64"]
@@ -229,9 +244,13 @@ def scope_chips(record, detailed=False):
 
 
 def field_edits(record, new_assignee_id, new_assignee_label, new_solventum, new_servicedesk,
-                new_regions=None, new_facilities=None):
+                new_regions=None, new_facilities=None, new_due="__skip__"):
     """Diff the editable fields of an issue/project against the form values."""
     edits = []
+    if new_due != "__skip__" and new_due != record.get("DueDate"):
+        old_due = record.get("DueDate")
+        edits.append({"field": "Due date", "old": f"{old_due}" if old_due else "",
+                      "new": f"{new_due}" if new_due else ""})
     if new_assignee_id != record["AssignedTo"]:
         edits.append({"field": "Assigned to", "old": record["AssignedToName"] or "",
                       "new": "" if new_assignee_label == "(Unassigned)" else new_assignee_label})
@@ -549,7 +568,9 @@ def new_issue_dialog(user):
     assignee = col1.selectbox("Assign to", ["(Unassigned)"] + list(names))
     solventum = col2.text_input("Solventum Ticket #")
     servicedesk = col3.text_input("ServiceDesk Ticket #")
-    is_major = st.checkbox("🚩 Major issue")
+    m1, m2 = st.columns(2)
+    is_major = m1.checkbox("🚩 Major issue")
+    due = m2.date_input("Due date (optional)", value=None)
     if st.button("Submit Issue", type="primary", use_container_width=True):
         if not title.strip() or not description.strip():
             st.error("Title and description are required.")
@@ -559,8 +580,12 @@ def new_issue_dialog(user):
                 solventum.strip() or None, servicedesk.strip() or None,
                 json.dumps(regions) if regions else None,
                 json.dumps(facilities) if facilities else None,
-                is_major,
+                is_major, due,
             )
+            if names.get(assignee):
+                notify.notify_assignment(db.get_config(), "issue", issue_id, title.strip(),
+                                         db.get_user_by_id(names[assignee]),
+                                         user["DisplayName"], user["Id"])
             st.toast(f"Issue #{issue_id} created.")
             st.rerun()
 
@@ -586,6 +611,10 @@ def new_project_dialog(user):
                                     servicedesk.strip() or None,
                                     json.dumps(regions) if regions else None,
                                     json.dumps(facilities) if facilities else None)
+            if names.get(assignee):
+                notify.notify_assignment(db.get_config(), "project", pid, title.strip(),
+                                         db.get_user_by_id(names[assignee]),
+                                         user["DisplayName"], user["Id"])
             st.toast(f"Project #{pid} created.")
             st.rerun()
 
@@ -621,7 +650,7 @@ def major_close_dialog(user):
                                 servicedesk_ticket=p["servicedesk"],
                                 regions=json.dumps(p["regions"]) if p["regions"] else None,
                                 facilities=json.dumps(p["facilities"]) if p["facilities"] else None,
-                                is_major=p["is_major"])
+                                is_major=p["is_major"], due_date=p["due"])
             db.add_update(p["issue_id"], user["Id"], comment, p["status_change"],
                           json.dumps(edits) if edits else None)
             del st.session_state["pending_major_close"]
@@ -671,6 +700,42 @@ def page_issues(user, config):
                                      help="Open / In Progress issues with no update since the last deadline")
     deadline = reporting.last_deadline(config)
 
+    with st.expander("Bulk actions"):
+        open_issues_bulk = db.list_issues(
+            statuses=["Open", "In Progress", "Waiting on Solventum", "Hold"])
+        bmap = {f"#{i['Id']} — {i['Title']}": i for i in open_issues_bulk}
+        picked = st.multiselect("Issues to act on", list(bmap), key="bulk_pick")
+        bc1, bc2 = st.columns([2, 3])
+        action = bc1.selectbox("Action", ["Close", "Change status", "Reassign"], key="bulk_action")
+        bulk_users = {u["DisplayName"]: u["Id"] for u in db.list_users(active_only=True)}
+        target = None
+        if action == "Change status":
+            # 'Waiting on Solventum' is excluded - it needs a per-issue ticket number.
+            target = bc2.selectbox("New status", [s for s in STATUSES if s != "Waiting on Solventum"],
+                                   key="bulk_status")
+        elif action == "Reassign":
+            target = bc2.selectbox("Assign to", ["(Unassigned)"] + list(bulk_users), key="bulk_assignee")
+        if st.button("Apply", disabled=not picked, key="bulk_apply"):
+            chosen = [bmap[p] for p in picked]
+            for i in chosen:
+                if action in ("Close", "Change status"):
+                    new_s = "Closed" if action == "Close" else target
+                    if new_s != i["Status"]:
+                        db.set_issue_fields(i["Id"], status=new_s)
+                        db.add_update(i["Id"], user["Id"], "", f"{i['Status']} -> {new_s}")
+                else:
+                    aid = None if target == "(Unassigned)" else bulk_users[target]
+                    if aid != i["AssignedTo"]:
+                        db.set_issue_fields(i["Id"], assigned_to=aid)
+                        db.add_update(i["Id"], user["Id"], "", None,
+                                      json.dumps([{"field": "Assigned to",
+                                                   "old": i["AssignedToName"] or "",
+                                                   "new": "" if target == "(Unassigned)" else target}]))
+            db.audit(user["Id"], "bulk_action", f"{action} on {len(chosen)} issue(s)")
+            st.success(f"Applied '{action}' to {len(chosen)} issue(s).")
+            del st.session_state["bulk_pick"]
+            st.rerun()
+
     @st.fragment(run_every="10s")
     def issue_cards():
         issues = db.list_issues(statuses=status_filter or None)
@@ -702,6 +767,7 @@ def page_issues(user, config):
                     f"#{i['Id']} · {html.escape(i['Title'])}</div>"
                     + (chip("🚩 Major", "#d32f2f") if i["IsMajor"] else "")
                     + chip(i["Status"], STATUS_COLORS.get(i["Status"], NEUTRAL))
+                    + due_chip(i)
                     + tickets
                     + scope_chips(i)
                     + f"<p class='issue-meta'>assigned to {html.escape(i['AssignedToName'] or 'no one')}"
@@ -740,12 +806,12 @@ def issue_detail(issue_id, user):
             st.rerun()
     if editable and (user["IsAdmin"] or issue["ReportedBy"] == user["Id"]):
         with h2.popover("🗑 Delete", use_container_width=True):
-            st.warning("Permanently delete this issue and its entire history?")
-            if st.button("Yes, delete permanently", type="primary", key=f"delissue_{issue_id}"):
-                db.delete_issue(issue_id)
+            st.warning("Move this issue to the recycle bin? An admin can restore it.")
+            if st.button("Delete issue", type="primary", key=f"delissue_{issue_id}"):
+                db.delete_issue(issue_id, user["Id"])
                 db.audit(user["Id"], "delete_issue", f"#{issue_id} {issue['Title']}")
                 st.session_state.selected_issue = None
-                st.toast(f"Issue #{issue_id} deleted.")
+                st.toast(f"Issue #{issue_id} moved to the recycle bin.")
                 st.rerun()
     tickets = ""
     if issue["SolventumTicket"]:
@@ -754,7 +820,8 @@ def issue_detail(issue_id, user):
         tickets += servicedesk_chip(issue["ServiceDeskTicket"])
     st.markdown(
         (chip("🚩 Major", "#d32f2f") if issue["IsMajor"] else "")
-        + chip(issue["Status"], STATUS_COLORS.get(issue["Status"], NEUTRAL)) + tickets
+        + chip(issue["Status"], STATUS_COLORS.get(issue["Status"], NEUTRAL))
+        + due_chip(issue) + tickets
         + f"<p class='issue-meta'>Reported by {html.escape(issue['ReportedByName'])} on "
         f"{fmt_dt(issue['CreatedAt'])} ({_rel_time(issue['CreatedAt'])}) · assigned to "
         f"{html.escape(issue['AssignedToName'] or 'no one')}</p>",
@@ -814,13 +881,16 @@ def issue_detail(issue_id, user):
         col3, col4 = st.columns(2)
         new_solventum = col3.text_input("Solventum Ticket #", value=issue["SolventumTicket"] or "")
         new_servicedesk = col4.text_input("ServiceDesk Ticket #", value=issue["ServiceDeskTicket"] or "")
-        new_major = st.checkbox("🚩 Major issue", value=bool(issue["IsMajor"]))
+        mj, dd = st.columns(2)
+        new_major = mj.checkbox("🚩 Major issue", value=bool(issue["IsMajor"]))
+        new_due = dd.date_input("Due date", value=issue["DueDate"])
         if st.form_submit_button("Save Update", type="primary"):
             status_change = None
             if new_status != issue["Status"]:
                 status_change = f"{issue['Status']} -> {new_status}"
             edits = field_edits(issue, names.get(new_assignee), new_assignee,
-                                new_solventum, new_servicedesk, new_regions, new_facilities)
+                                new_solventum, new_servicedesk, new_regions, new_facilities,
+                                new_due=new_due)
             if new_major != bool(issue["IsMajor"]):
                 edits.append({"field": "Major", "old": "Yes" if issue["IsMajor"] else "No",
                               "new": "Yes" if new_major else "No"})
@@ -838,7 +908,7 @@ def issue_detail(issue_id, user):
                     "solventum": new_solventum.strip() or None,
                     "servicedesk": new_servicedesk.strip() or None,
                     "regions": new_regions, "facilities": new_facilities,
-                    "is_major": new_major, "edits": edits,
+                    "is_major": new_major, "due": new_due, "edits": edits,
                 }
                 major_close_dialog(user)
             else:
@@ -848,9 +918,16 @@ def issue_detail(issue_id, user):
                                     servicedesk_ticket=new_servicedesk.strip() or None,
                                     regions=json.dumps(new_regions) if new_regions else None,
                                     facilities=json.dumps(new_facilities) if new_facilities else None,
-                                    is_major=new_major)
+                                    is_major=new_major, due_date=new_due)
                 db.add_update(issue_id, user["Id"], comment.strip(), status_change,
                               json.dumps(edits) if edits else None)
+                new_aid = names.get(new_assignee)
+                if new_aid and new_aid != issue["AssignedTo"]:
+                    notify.notify_assignment(db.get_config(), "issue", issue_id, issue["Title"],
+                                             db.get_user_by_id(new_aid), user["DisplayName"], user["Id"])
+                if comment.strip():
+                    notify.notify_mentions(db.get_config(), "issue", issue_id, issue["Title"],
+                                           comment.strip(), user["DisplayName"], user["Id"])
                 st.success("Update saved.")
                 st.rerun()
 
@@ -971,12 +1048,12 @@ def project_detail(project_id, user):
             st.rerun()
     if editable and (user["IsAdmin"] or proj["CreatedBy"] == user["Id"]):
         with h2.popover("🗑 Delete", use_container_width=True):
-            st.warning("Permanently delete this project and its entire history?")
-            if st.button("Yes, delete permanently", type="primary", key=f"delproj_{project_id}"):
-                db.delete_project(project_id)
+            st.warning("Move this project to the recycle bin? An admin can restore it.")
+            if st.button("Delete project", type="primary", key=f"delproj_{project_id}"):
+                db.delete_project(project_id, user["Id"])
                 db.audit(user["Id"], "delete_project", f"#{project_id} {proj['Title']}")
                 st.session_state.selected_project = None
-                st.toast(f"Project #{project_id} deleted.")
+                st.toast(f"Project #{project_id} moved to the recycle bin.")
                 st.rerun()
     tickets = ""
     if proj["SolventumTicket"]:
@@ -1060,6 +1137,13 @@ def project_detail(project_id, user):
                                       facilities=json.dumps(new_facilities) if new_facilities else None)
                 db.add_project_update(project_id, user["Id"], comment.strip(), status_change,
                                       json.dumps(edits) if edits else None)
+                new_aid = names.get(new_assignee)
+                if new_aid and new_aid != proj["AssignedTo"]:
+                    notify.notify_assignment(db.get_config(), "project", project_id, proj["Title"],
+                                             db.get_user_by_id(new_aid), user["DisplayName"], user["Id"])
+                if comment.strip():
+                    notify.notify_mentions(db.get_config(), "project", project_id, proj["Title"],
+                                           comment.strip(), user["DisplayName"], user["Id"])
                 st.success("Update saved.")
                 st.rerun()
 
@@ -1143,11 +1227,13 @@ def page_dashboard(user, config):
              and (i["LastUpdateAt"] is None or i["LastUpdateAt"] < deadline)]
     active_projects = [p for p in projects if p["Status"] in ("Planned", "In Progress", "On Hold")]
 
-    c1, c2, c3, c4 = st.columns(4)
+    overdue = [i for i in open_issues if is_overdue(i)]
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Open issues", len(open_issues))
-    c2.metric("Closed this week", len(closed_week))
-    c3.metric("Needs update", len(needs))
-    c4.metric("Active projects", len(active_projects))
+    c2.metric("Overdue", len(overdue))
+    c3.metric("Closed this week", len(closed_week))
+    c4.metric("Needs update", len(needs))
+    c5.metric("Active projects", len(active_projects))
 
     now = datetime.now()
     if open_issues:
@@ -1412,6 +1498,35 @@ def page_admin(user, config):
             db.audit(user["Id"], "send_project_digest", "manual")
             st.success("Project digest sent (or already sent this week).")
 
+    st.subheader("Recycle bin")
+    st.caption("Deleted issues and projects. Restore brings them back; permanent delete "
+               "removes them and their history for good.")
+    del_issues = db.list_deleted_issues()
+    del_projects = db.list_deleted_projects()
+    if not del_issues and not del_projects:
+        st.caption("Empty.")
+    for kind, items, restore_fn, purge_fn in [
+        ("issue", del_issues, db.restore_issue, db.purge_issue),
+        ("project", del_projects, db.restore_project, db.purge_project),
+    ]:
+        for it in items:
+            c1, c2, c3 = st.columns([5, 1, 1], vertical_alignment="center")
+            c1.markdown(
+                f"{chip(kind.title(), '#546e7a')} #{it['Id']} · {html.escape(it['Title'])}"
+                f"<br><span class='issue-meta'>deleted by "
+                f"{html.escape(it['DeletedByName'] or 'unknown')} · {fmt_dt(it['DeletedAt'])}</span>",
+                unsafe_allow_html=True)
+            if c2.button("Restore", key=f"restore_{kind}_{it['Id']}", use_container_width=True):
+                restore_fn(it["Id"])
+                db.audit(user["Id"], f"restore_{kind}", f"#{it['Id']} {it['Title']}")
+                st.rerun()
+            with c3.popover("Delete", use_container_width=True):
+                st.warning("Permanently delete? This cannot be undone.")
+                if st.button("Delete forever", key=f"purge_{kind}_{it['Id']}"):
+                    purge_fn(it["Id"])
+                    db.audit(user["Id"], f"purge_{kind}", f"#{it['Id']} {it['Title']}")
+                    st.rerun()
+
     st.subheader("Audit log")
     st.caption("Deletions and administrative actions, most recent first.")
     entries = db.list_audit(200)
@@ -1575,6 +1690,12 @@ def main():
             st.session_state.filter_mine_default = True
         if qp.get("needsupdate") == "1":
             st.session_state.filter_needs_default = True
+        if (qp.get("issue") or "").isdigit():
+            st.session_state.selected_issue = int(qp["issue"])
+            st.session_state.page = "Issues"
+        if (qp.get("project") or "").isdigit():
+            st.session_state.selected_project = int(qp["project"])
+            st.session_state.page = "Projects"
 
     if st.session_state.get("page") not in pages:
         st.session_state.page = pages[0]

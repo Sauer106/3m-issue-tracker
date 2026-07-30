@@ -172,14 +172,22 @@ LEFT JOIN Users a ON a.Id = i.AssignedTo
 """
 
 
-def list_issues(statuses=None):
-    sql = ISSUE_SELECT
-    params = ()
+def list_issues(statuses=None, include_deleted=False):
+    clauses, params = [], []
+    if not include_deleted:
+        clauses.append("i.DeletedAt IS NULL")
     if statuses:
-        placeholders = ",".join("?" for _ in statuses)
-        sql += f" WHERE i.Status IN ({placeholders})"
-        params = tuple(statuses)
-    return query(sql + " ORDER BY i.Id DESC", params)
+        clauses.append("i.Status IN (" + ",".join("?" for _ in statuses) + ")")
+        params += list(statuses)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return query(ISSUE_SELECT + where + " ORDER BY i.Id DESC", tuple(params))
+
+
+def list_deleted_issues():
+    return query(
+        """SELECT i.Id, i.Title, i.Status, i.DeletedAt, d.DisplayName AS DeletedByName
+           FROM Issues i LEFT JOIN Users d ON d.Id = i.DeletedBy
+           WHERE i.DeletedAt IS NOT NULL ORDER BY i.DeletedAt DESC""")
 
 
 def get_issue(issue_id):
@@ -189,13 +197,13 @@ def get_issue(issue_id):
 
 def create_issue(title, description, reported_by, assigned_to=None,
                  solventum_ticket=None, servicedesk_ticket=None, regions=None, facilities=None,
-                 is_major=False):
+                 is_major=False, due_date=None):
     return insert_returning_id(
         """INSERT INTO Issues (Title, Description, ReportedBy, AssignedTo, SolventumTicket,
-                               ServiceDeskTicket, Regions, Facilities, IsMajor)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                               ServiceDeskTicket, Regions, Facilities, IsMajor, DueDate)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (title, description, reported_by, assigned_to, solventum_ticket, servicedesk_ticket,
-         regions, facilities, 1 if is_major else 0),
+         regions, facilities, 1 if is_major else 0, due_date),
     )
 
 
@@ -217,8 +225,12 @@ def set_proposal_status(update_id, status):
 
 def set_issue_fields(issue_id, status=None, assigned_to="__unchanged__",
                      solventum_ticket="__unchanged__", servicedesk_ticket="__unchanged__",
-                     regions="__unchanged__", facilities="__unchanged__", is_major="__unchanged__"):
+                     regions="__unchanged__", facilities="__unchanged__", is_major="__unchanged__",
+                     due_date="__unchanged__"):
     sets, params = ["UpdatedAt = SYSDATETIME()"], []
+    if due_date != "__unchanged__":
+        sets.append("DueDate = ?")
+        params.append(due_date)
     if status is not None:
         sets.append("Status = ?")
         params.append(status)
@@ -252,7 +264,19 @@ def delete_update(update_id):
     execute("DELETE FROM IssueUpdates WHERE Id = ?", (update_id,))
 
 
-def delete_issue(issue_id):
+def delete_issue(issue_id, deleted_by):
+    """Soft delete: hide the issue (and its history) but keep it for restore."""
+    execute("UPDATE Issues SET DeletedAt = SYSDATETIME(), DeletedBy = ? WHERE Id = ?",
+            (deleted_by, issue_id))
+
+
+def restore_issue(issue_id):
+    execute("UPDATE Issues SET DeletedAt = NULL, DeletedBy = NULL WHERE Id = ?", (issue_id,))
+
+
+def purge_issue(issue_id):
+    """Permanent hard delete from the recycle bin, including updates and attachments."""
+    execute("DELETE FROM Attachments WHERE ParentType = 'issue' AND ParentId = ?", (issue_id,))
     execute("DELETE FROM IssueUpdates WHERE IssueId = ?", (issue_id,))
     execute("DELETE FROM Issues WHERE Id = ?", (issue_id,))
 
@@ -277,14 +301,22 @@ LEFT JOIN Users a ON a.Id = p.AssignedTo
 """
 
 
-def list_projects(statuses=None):
-    sql = PROJECT_SELECT
-    params = ()
+def list_projects(statuses=None, include_deleted=False):
+    clauses, params = [], []
+    if not include_deleted:
+        clauses.append("p.DeletedAt IS NULL")
     if statuses:
-        placeholders = ",".join("?" for _ in statuses)
-        sql += f" WHERE p.Status IN ({placeholders})"
-        params = tuple(statuses)
-    return query(sql + " ORDER BY p.Id DESC", params)
+        clauses.append("p.Status IN (" + ",".join("?" for _ in statuses) + ")")
+        params += list(statuses)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return query(PROJECT_SELECT + where + " ORDER BY p.Id DESC", tuple(params))
+
+
+def list_deleted_projects():
+    return query(
+        """SELECT p.Id, p.Title, p.Status, p.DeletedAt, d.DisplayName AS DeletedByName
+           FROM Projects p LEFT JOIN Users d ON d.Id = p.DeletedBy
+           WHERE p.DeletedAt IS NOT NULL ORDER BY p.DeletedAt DESC""")
 
 
 def get_project(project_id):
@@ -342,7 +374,19 @@ def delete_project_update(update_id):
     execute("DELETE FROM ProjectUpdates WHERE Id = ?", (update_id,))
 
 
-def delete_project(project_id):
+def delete_project(project_id, deleted_by):
+    """Soft delete: hide the project (and its history) but keep it for restore."""
+    execute("UPDATE Projects SET DeletedAt = SYSDATETIME(), DeletedBy = ? WHERE Id = ?",
+            (deleted_by, project_id))
+
+
+def restore_project(project_id):
+    execute("UPDATE Projects SET DeletedAt = NULL, DeletedBy = NULL WHERE Id = ?", (project_id,))
+
+
+def purge_project(project_id):
+    """Permanent hard delete from the recycle bin, including updates and attachments."""
+    execute("DELETE FROM Attachments WHERE ParentType = 'project' AND ParentId = ?", (project_id,))
     execute("DELETE FROM ProjectUpdates WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM Projects WHERE Id = ?", (project_id,))
 

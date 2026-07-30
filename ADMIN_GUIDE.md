@@ -12,12 +12,15 @@ For installing, TLS certificates, the reverse proxy, and other server work, see 
 2. [The Admin page](#the-admin-page)
 3. [Managing users](#managing-users)
 4. [Managing regions and facilities](#managing-regions-and-facilities)
-5. [Moderating issues, projects, and updates](#moderating-issues-projects-and-updates)
+5. [Moderating and the recycle bin](#moderating-and-the-recycle-bin)
 6. [Fix proposals and edit locks](#fix-proposals-and-edit-locks)
-7. [Emails](#emails)
-8. [Backups](#backups)
-9. [Handling common user problems](#handling-common-user-problems)
-10. [Security notes](#security-notes)
+7. [Reassigning work](#reassigning-work)
+8. [Email recipients and tools](#email-recipients-and-tools)
+9. [The audit log](#the-audit-log)
+10. [Reporting and exports](#reporting-and-exports)
+11. [Backups](#backups)
+12. [Handling common user problems](#handling-common-user-problems)
+13. [Security notes](#security-notes)
 
 ---
 
@@ -31,10 +34,17 @@ The rule of thumb: keep admin rights to the few people who actually need to mana
 
 ## The Admin page
 
-Click **Admin** in the sidebar. The page has two parts:
+Click **Admin** in the sidebar. It gathers everything admin-only in one place:
 
 - **User management** — create accounts and manage existing ones.
-- **Regions & Facilities** — curate the list of regions and facilities that everyone tags issues and projects with.
+- **Reassign work** — move a person's open items to someone else.
+- **Email recipients** — control who gets the digests and reminders.
+- **Regions & Facilities** — curate the region/facility list.
+- **Email tools** — test or send the digests on demand.
+- **Recycle bin** — restore or permanently remove deleted items.
+- **Audit log** — a record of deletions and admin actions.
+
+There's also a **Dashboard** card (visible to everyone) with metrics, charts, and spreadsheet exports.
 
 ---
 
@@ -88,14 +98,21 @@ Changes take effect immediately for everyone the next time they open a picker.
 
 ---
 
-## Moderating issues, projects, and updates
+## Moderating and the recycle bin
 
 Regular users can delete their own updates, and the person who created an issue or project can delete that item. As an admin, you can delete **anything**:
 
-- **Delete a single history entry** — open any issue or project; each timeline entry has a 🗑 button. Use this to remove a mistaken or inappropriate comment or change.
-- **Delete an entire issue or project** — near the title there's a **🗑 Delete** button with a confirmation step. This removes the item and its whole history.
+- **Delete a single history entry** — open any issue or project; each timeline entry has a 🗑 button. Use this to remove a mistaken or inappropriate comment or change. This one is immediate and permanent.
+- **Delete an entire issue or project** — near the title there's a **🗑 Delete** button with a confirmation step. This moves the item (and its history) to the **recycle bin** rather than erasing it.
 
-Deletions are permanent and are not themselves logged. Treat them as a real cleanup tool, not an undo button, and lean on deactivating users rather than deleting their work where you can.
+### The recycle bin
+
+Deleted issues and projects collect in the **Recycle bin** section of the Admin page, showing who deleted each one and when. For each you can:
+
+- **Restore** — bring it back to the normal lists, exactly as it was.
+- **Delete forever** — a permanent purge (with a confirmation) that also removes its updates and attachments. Use this sparingly; it can't be undone.
+
+Every deletion, restore, and purge is written to the audit log, so there's always a record of who removed or recovered something.
 
 ---
 
@@ -108,16 +125,52 @@ Two things admins can always do, regardless of assignment:
 
 ---
 
-## Emails
+## Reassigning work
 
-The app sends two scheduled emails, both to the addresses on active user accounts:
+When someone changes roles or leaves, their open items shouldn't stay stuck to them. Under **Reassign work**, pick the person to move work **From**, the person to move it **To**, and click Reassign. It shows how many open issues and projects that person holds and moves them all at once. The action is audit-logged. (This is the bulk version of what you can also do one item at a time from the update form.)
 
-- **Reminder** — Thursday morning. Lists each person's open issues that haven't been updated since the previous Thursday 2:00 PM deadline.
-- **Digest** — Friday morning. A summary of the reporting week for everyone.
+---
 
-They run as scheduled tasks on the server and send through the internal mail relay. Settings (the relay host, the from address, and any extra digest recipients) live in `config.ini`. Both scripts are safe to run by hand for testing and won't double-send, because they check what's already gone out.
+## Email recipients and tools
 
-If emails aren't arriving, the most common cause is the mail relay not permitting the server to send. That's a relay-side allowlist, handled by whoever runs the mail system, not something in the app.
+### Who gets the emails
+
+Under **Email recipients**, every active user has two checkboxes:
+
+- **Digests** — include them on the weekly issue and project digests.
+- **Reminders** — include them in the Thursday update nudge.
+
+Toggle either off and that person stops getting that email. Below the list, **Additional digest recipients** lets you add managers or distribution lists that aren't app users (an email plus an optional label) so they receive the digests too. This fully replaces the old config-file recipient list.
+
+The app also sends **immediate notifications** — an assignment email when an issue/project is assigned to someone, and a mention email when a user is written as `@username` in a comment. Those always go to the affected person.
+
+### Testing and sending on demand
+
+Under **Email tools**:
+
+- **Test issue digest / project digest / reminder to me** — sends the real thing to your own address so you can see it, without emailing anyone else and without affecting the scheduled run.
+- **Send now to everyone** — fires the real digest to all recipients immediately. It still respects the once-per-week guard, so it won't double up on top of the scheduled Friday send.
+
+### How the scheduled emails run
+
+Three scheduled tasks run on the server and send through the internal relay: the **reminder** (Thursday), the **issue digest** (Friday), and the **project digest** (Friday, a few minutes later). If emails aren't arriving, the usual cause is the mail relay not permitting the server to send — a relay-side allowlist handled by whoever runs the mail system, not something in the app.
+
+---
+
+## The audit log
+
+The **Audit log** section lists the accountability-relevant actions, most recent first: deletions and restores, user management (create, reset password, reset 2FA, activate/deactivate, promote/demote), region and facility deletes, recipient changes, lock takeovers, reassignments, and manual email sends. Each entry shows who did it and when.
+
+It doesn't record ordinary edits (those already live in each item's own history) — it's the record of the powerful and destructive actions, the things you'd want to answer "who did that?" about later.
+
+---
+
+## Reporting and exports
+
+- **Dashboard** — the Dashboard card (open to everyone) shows counts, aging, and charts by status, region, and assignee.
+- **Spreadsheet export** — the Export buttons on the Dashboard download issues or projects as CSV for status reports and leadership decks.
+- **Grafana / BI** — the database ships with read-only reporting views (`vw_IssuesFlat`, `vw_IssuesByRegion`, `vw_IssuesByFacility`, `vw_ProjectsFlat`) that flatten the region/facility tags so a dashboard tool can group by region without parsing JSON. Point Grafana at the database with a read-only SQL login and query those. (Standing up Grafana itself is an infrastructure task.)
+- **ServiceDesk** — a read-only pull of CA Service Desk Manager ticket status is scaffolded but not yet live; it's waiting on API access. Nothing appears in the app until it's configured.
 
 ---
 
@@ -127,7 +180,7 @@ The database backs itself up automatically every night, verifies each backup fil
 
 Two things worth knowing:
 
-- The backups sit on the same server. That protects against mistakes and corruption, but not against the server's disk failing. Ideally those backup files also get swept to a network location by whatever backup system your infrastructure team runs.
+- The backups sit on the same server. That protects against mistakes and corruption, but not against the server's disk failing. The backup script accepts an off-site option (`backup_db.ps1 -OffsiteDir "\\server\share\..."`) to copy each verified backup to a network share — ask your infrastructure team for a share the server can write to, then enable it (see SETUP.md).
 - The nightly job is a scheduled task set up during installation. If you ever need to restore, that's a database operation for someone comfortable with SQL Server.
 
 ---
@@ -156,3 +209,4 @@ A few things to keep in mind as the person responsible for the app:
 - Access is username + password + two-factor, with a lockout after repeated failures, over HTTPS. Deactivating an account cuts off access, and resetting a password or 2FA immediately invalidates that person's existing signed-in session.
 - Attachments are stored as-is and are not scanned for malware. Treat uploads from the same trust level as email attachments from a colleague.
 - Keep the admin group small. Every admin can delete any content and reset any account.
+- Deleting an issue or project is now recoverable (recycle bin) and every deletion, restore, and purge is written to the audit log — so destructive actions leave a trail and aren't instantly irreversible.

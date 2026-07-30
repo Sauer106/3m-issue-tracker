@@ -17,9 +17,10 @@ The app lives at **https://3mtracking.uhsinc.com**. It works in any modern brows
 7. [Regions and facilities](#regions-and-facilities)
 8. [The history timeline](#the-history-timeline)
 9. [Attachments](#attachments)
-10. [Working at the same time as others](#working-at-the-same-time-as-others)
-11. [Emails you'll receive](#emails-youll-receive)
-12. [Frequently asked questions](#frequently-asked-questions)
+10. [The dashboard](#the-dashboard)
+11. [Working at the same time as others](#working-at-the-same-time-as-others)
+12. [Emails and notifications](#emails-and-notifications)
+13. [Frequently asked questions](#frequently-asked-questions)
 
 ---
 
@@ -68,6 +69,7 @@ The sidebar on the left is your navigation. It shows a card for each area:
 
 - **Issues** — the running list of issues.
 - **Projects** — the running list of projects.
+- **Dashboard** — metrics and charts across all the work.
 - **Admin** — only appears if you're an administrator.
 
 Click a card to switch areas. The card you're on is highlighted. Your name and the current update deadline show at the top of the sidebar.
@@ -84,6 +86,7 @@ Each card shows the issue number and title, plus quick badges:
 
 - A colored **status** badge (Open, In Progress, and so on).
 - A red **Major** badge if the issue is flagged major.
+- A **due date** badge, which turns into a red **⏰ Overdue** badge once the date passes on an open issue.
 - **Solventum** and **ServiceDesk** ticket numbers, if they've been entered.
 - The **regions** it covers, and a count if only some facilities in those regions are selected.
 - A line showing who it's assigned to, who reported it, and when it was last touched.
@@ -94,7 +97,8 @@ At the top of the list:
 
 - **Status** — pick which statuses to show. By default you see everything that isn't closed.
 - **Search** — type to match the title or description.
-- **Mine only** — show just the issues you reported or that are assigned to you.
+- **Mine only** — show just the issues assigned to you.
+- **Needs update** — show only the Open / In Progress issues with no update since the last Thursday 2:00 PM deadline (the same ones the reminder email chases).
 
 ### Creating an issue
 
@@ -105,21 +109,26 @@ Click **➕ New Issue** at the top right of the Issues page. A window opens wher
 - **Assign to** — leave unassigned or pick a person.
 - **Solventum Ticket #** and **ServiceDesk Ticket #** — optional, add them if the issue relates to a vendor or help-desk ticket.
 - **Major issue** — check this if it's a significant, widespread issue (see below).
+- **Due date** — optional target date. Once it passes on an open issue, the card shows a red Overdue badge.
 
-Submit and the issue appears in the list.
+Submit and the issue appears in the list. If you assign it to someone, they get an email letting them know.
 
 ### Opening and updating an issue
 
 Click **Open** on any card. The detail view shows the full description, the badges, and the history. To make a change, use the **Add an update** form:
 
-- Type a **comment** about what's happening.
-- Change the **status** or the **assignee**.
+- Type a **comment** about what's happening. Mention a teammate with **@username** and they'll get an email pointing them to the issue.
+- Change the **status** or the **assignee** (reassigning emails the new person).
 - Update the **Solventum** or **ServiceDesk** ticket numbers.
-- Toggle the **Major** flag.
+- Toggle the **Major** flag or set a **due date**.
 
 Save the update and everything you changed is recorded in the history, with your name and the time. You don't have to write a comment just to change a field; a field change on its own is recorded too.
 
 Use the **← All issues** link to go back to the list.
+
+### Bulk actions
+
+Need to act on several issues at once? Open **Bulk actions** at the top of the Issues page, pick the issues from the list, choose **Close**, **Change status**, or **Reassign**, and click Apply. Each change is recorded on those issues just like a normal update.
 
 ### Statuses
 
@@ -200,7 +209,7 @@ Times adjust to whoever is looking. If a teammate is in Central time and you're 
 
 ### Removing your own entries
 
-You can delete an update you posted using the 🗑 button next to it. You can also delete an entire issue or project you created (there's a **🗑 Delete** button with a confirmation near the title). Administrators can delete anything. Deletions are permanent, so use them with care.
+You can delete an update you posted using the 🗑 button next to it. You can also delete an entire issue or project you created (there's a **🗑 Delete** button with a confirmation near the title). Administrators can delete anything. Deleting an issue or project moves it to a recycle bin rather than erasing it, so an administrator can restore it if it was a mistake.
 
 ---
 
@@ -213,6 +222,17 @@ Every issue and project has a **📎 Attachments** area under its description.
 - **Delete** files you uploaded with the 🗑 button (administrators can delete any).
 
 Uploads and deletions show up in the history, so there's a record of what was attached and when.
+
+---
+
+## The dashboard
+
+The **Dashboard** card gives you the big picture across all issues and projects:
+
+- Headline numbers: open issues, overdue, closed this week, needing an update, and active projects.
+- How old the open issues are, on average and at the oldest.
+- Charts of issues by status, open issues by region and by assignee, and projects by status.
+- An **Export** section with buttons to download the issues or projects as a spreadsheet (they open in Excel), handy for status reports.
 
 ---
 
@@ -233,14 +253,20 @@ Administrators can take over a lock immediately if they need to.
 
 ---
 
-## Emails you'll receive
+## Emails and notifications
 
-The app sends two automated emails:
+**Scheduled emails:**
 
-- **Thursday morning reminder** — if you have an open issue with no update since last week's deadline, you get a note listing them. Updates are due by **Thursday 2:00 PM**.
-- **Friday morning digest** — a summary of the week's issues goes out to everyone: what's open, what's new, what closed, and anything that missed its update deadline.
+- **Thursday morning reminder** — if you have an open issue with no update since last week's deadline, you get a note listing them. Updates are due by **Thursday 2:00 PM**. The button drops you straight onto your overdue issues.
+- **Friday morning issue digest** — a summary of the week's issues to everyone: what's open, new, closed, and missing an update.
+- **Friday morning project digest** — a separate summary of active and recently completed projects.
 
-Both include a link straight to the app.
+**Notifications (sent right away):**
+
+- **Assignment** — when an issue or project is assigned to you, you get an email with a link to it.
+- **Mention** — when someone writes **@yourusername** in a comment, you get an email with the comment and a link.
+
+Every email button takes you straight to the relevant issue, project, or list. An administrator can control who receives the digests and reminders.
 
 ---
 
@@ -261,3 +287,7 @@ Both include a link straight to the app.
 **Why can't I set "Waiting on Solventum"?** That status needs a Solventum ticket number. Enter one in the update form, then save.
 
 **Who can see my issues?** Everyone with an account sees all issues and projects. This is a shared team tool.
+
+**How do I get someone's attention on an issue?** Assign it to them, or write **@theirusername** in a comment. Either one emails them a link.
+
+**Can I get a due date reminder?** Issues with a due date show an Overdue badge once the date passes, and overdue issues are counted on the Dashboard. The Thursday reminder still keys off the weekly update deadline, not the due date.

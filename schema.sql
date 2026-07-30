@@ -300,6 +300,25 @@ IF COL_LENGTH('dbo.Users', 'TotpSecret') IS NULL
     ALTER TABLE dbo.Users ADD TotpSecret NVARCHAR(64) NULL;
 GO
 
+-- Upgrade: per-issue due date.
+IF COL_LENGTH('dbo.Issues', 'DueDate') IS NULL
+    ALTER TABLE dbo.Issues ADD DueDate DATE NULL;
+GO
+
+-- Upgrade: soft-delete (recycle bin) for issues and projects.
+IF COL_LENGTH('dbo.Issues', 'DeletedAt') IS NULL
+    ALTER TABLE dbo.Issues ADD DeletedAt DATETIME2 NULL;
+GO
+IF COL_LENGTH('dbo.Issues', 'DeletedBy') IS NULL
+    ALTER TABLE dbo.Issues ADD DeletedBy INT NULL;
+GO
+IF COL_LENGTH('dbo.Projects', 'DeletedAt') IS NULL
+    ALTER TABLE dbo.Projects ADD DeletedAt DATETIME2 NULL;
+GO
+IF COL_LENGTH('dbo.Projects', 'DeletedBy') IS NULL
+    ALTER TABLE dbo.Projects ADD DeletedBy INT NULL;
+GO
+
 -- Upgrade: per-user email preferences (managed from the Admin page).
 IF COL_LENGTH('dbo.Users', 'ReceivesDigest') IS NULL
     ALTER TABLE dbo.Users ADD ReceivesDigest BIT NOT NULL CONSTRAINT DF_Users_ReceivesDigest DEFAULT 1;
@@ -328,4 +347,43 @@ GO
 ALTER ROLE db_datareader ADD MEMBER [NT AUTHORITY\SYSTEM];
 ALTER ROLE db_datawriter ADD MEMBER [NT AUTHORITY\SYSTEM];
 ALTER ROLE db_backupoperator ADD MEMBER [NT AUTHORITY\SYSTEM];  -- nightly backup task runs as SYSTEM
+GO
+
+-- Reporting views for Grafana / BI. They exclude soft-deleted rows and flatten the
+-- JSON region/facility lists so a dashboard can group by region without parsing JSON.
+-- Point Grafana at this database with a read-only SQL login and query these.
+CREATE OR ALTER VIEW dbo.vw_IssuesFlat AS
+SELECT i.Id, i.Title, i.Status, i.IsMajor, i.DueDate,
+       i.SolventumTicket, i.ServiceDeskTicket,
+       r.DisplayName AS ReportedBy, a.DisplayName AS AssignedTo,
+       i.CreatedAt, i.UpdatedAt, i.ResolvedAt,
+       (SELECT MAX(u.CreatedAt) FROM IssueUpdates u WHERE u.IssueId = i.Id) AS LastUpdateAt
+FROM Issues i
+JOIN Users r ON r.Id = i.ReportedBy
+LEFT JOIN Users a ON a.Id = i.AssignedTo
+WHERE i.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_IssuesByRegion AS
+SELECT i.Id AS IssueId, i.Status, i.IsMajor, i.DueDate, reg.value AS Region
+FROM Issues i
+CROSS APPLY OPENJSON(ISNULL(i.Regions, '[]')) reg
+WHERE i.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_IssuesByFacility AS
+SELECT i.Id AS IssueId, i.Status, i.IsMajor, fac.value AS Facility
+FROM Issues i
+CROSS APPLY OPENJSON(ISNULL(i.Facilities, '[]')) fac
+WHERE i.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_ProjectsFlat AS
+SELECT p.Id, p.Title, p.Status, p.SolventumTicket, p.ServiceDeskTicket,
+       c.DisplayName AS CreatedBy, a.DisplayName AS AssignedTo,
+       p.CreatedAt, p.UpdatedAt
+FROM Projects p
+JOIN Users c ON c.Id = p.CreatedBy
+LEFT JOIN Users a ON a.Id = p.AssignedTo
+WHERE p.DeletedAt IS NULL;
 GO

@@ -19,6 +19,7 @@ def find_delinquent_issues(week_start):
     return db.query(
         db.ISSUE_SELECT
         + """ WHERE i.Status IN ('Open', 'In Progress')
+              AND i.DeletedAt IS NULL
               AND NOT EXISTS (
                   SELECT 1 FROM IssueUpdates u
                   WHERE u.IssueId = i.Id AND u.CreatedAt >= ?
