@@ -113,6 +113,29 @@ BEGIN
 END
 GO
 
+IF OBJECT_ID('dbo.AuditLog') IS NULL
+BEGIN
+    CREATE TABLE dbo.AuditLog (
+        Id        INT IDENTITY(1,1) PRIMARY KEY,
+        ActorId   INT NULL REFERENCES dbo.Users(Id),  -- who did it (NULL if the actor was later deleted)
+        Action    NVARCHAR(60) NOT NULL,              -- e.g. 'delete_issue', 'reset_2fa'
+        Detail    NVARCHAR(400) NULL,                 -- human-readable specifics
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+    );
+    CREATE INDEX IX_AuditLog_CreatedAt ON dbo.AuditLog(CreatedAt DESC);
+END
+GO
+
+IF OBJECT_ID('dbo.ExtraRecipients') IS NULL
+BEGIN
+    CREATE TABLE dbo.ExtraRecipients (
+        Id    INT IDENTITY(1,1) PRIMARY KEY,
+        Email NVARCHAR(255) NOT NULL,
+        Label NVARCHAR(100) NULL   -- e.g. "HIM Manager", "3M distribution list"
+    );
+END
+GO
+
 IF OBJECT_ID('dbo.Presence') IS NULL
 BEGIN
     CREATE TABLE dbo.Presence (
@@ -275,6 +298,14 @@ GO
 -- Upgrade for databases created before the 2FA feature.
 IF COL_LENGTH('dbo.Users', 'TotpSecret') IS NULL
     ALTER TABLE dbo.Users ADD TotpSecret NVARCHAR(64) NULL;
+GO
+
+-- Upgrade: per-user email preferences (managed from the Admin page).
+IF COL_LENGTH('dbo.Users', 'ReceivesDigest') IS NULL
+    ALTER TABLE dbo.Users ADD ReceivesDigest BIT NOT NULL CONSTRAINT DF_Users_ReceivesDigest DEFAULT 1;
+GO
+IF COL_LENGTH('dbo.Users', 'ReceivesReminders') IS NULL
+    ALTER TABLE dbo.Users ADD ReceivesReminders BIT NOT NULL CONSTRAINT DF_Users_ReceivesReminders DEFAULT 1;
 GO
 
 -- Upgrade: brute-force lockout tracking.

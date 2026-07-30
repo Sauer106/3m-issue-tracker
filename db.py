@@ -129,6 +129,34 @@ def set_user_admin(user_id, is_admin):
     execute("UPDATE Users SET IsAdmin = ? WHERE Id = ?", (1 if is_admin else 0, user_id))
 
 
+def set_user_email_prefs(user_id, receives_digest, receives_reminders):
+    execute("UPDATE Users SET ReceivesDigest = ?, ReceivesReminders = ? WHERE Id = ?",
+            (1 if receives_digest else 0, 1 if receives_reminders else 0, user_id))
+
+
+def _execute_count(sql, params):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        n = cur.rowcount
+        conn.commit()
+        return n
+
+
+def reassign_issues(from_user_id, to_user_id, open_only=True):
+    sql = "UPDATE Issues SET AssignedTo = ?, UpdatedAt = SYSDATETIME() WHERE AssignedTo = ?"
+    if open_only:
+        sql += " AND Status IN ('Open', 'In Progress', 'Waiting on Solventum', 'Hold')"
+    return _execute_count(sql, (to_user_id, from_user_id))
+
+
+def reassign_projects(from_user_id, to_user_id, open_only=True):
+    sql = "UPDATE Projects SET AssignedTo = ?, UpdatedAt = SYSDATETIME() WHERE AssignedTo = ?"
+    if open_only:
+        sql += " AND Status IN ('Planned', 'In Progress', 'On Hold')"
+    return _execute_count(sql, (to_user_id, from_user_id))
+
+
 def set_user_active(user_id, is_active):
     execute("UPDATE Users SET IsActive = ? WHERE Id = ?", (1 if is_active else 0, user_id))
 
@@ -475,6 +503,52 @@ def update_facility(facility_id, name, code):
 
 def delete_facility(facility_id):
     execute("DELETE FROM Facilities WHERE Id = ?", (facility_id,))
+
+
+# ---------------------------------------------------------------- audit log
+
+def audit(actor_id, action, detail=None):
+    """Record an accountability-relevant action (deletions, admin actions)."""
+    execute("INSERT INTO AuditLog (ActorId, Action, Detail) VALUES (?, ?, ?)",
+            (actor_id, action, (detail or "")[:400]))
+
+
+def list_audit(limit=200):
+    return query(
+        """SELECT TOP (?) a.Id, a.Action, a.Detail, a.CreatedAt,
+                  u.DisplayName AS ActorName
+           FROM AuditLog a LEFT JOIN Users u ON u.Id = a.ActorId
+           ORDER BY a.Id DESC""",
+        (limit,),
+    )
+
+
+# ---------------------------------------------------------------- email recipients
+
+def list_extra_recipients():
+    return query("SELECT * FROM ExtraRecipients ORDER BY Email")
+
+
+def add_extra_recipient(email, label=None):
+    execute("INSERT INTO ExtraRecipients (Email, Label) VALUES (?, ?)", (email, label))
+
+
+def delete_extra_recipient(recipient_id):
+    execute("DELETE FROM ExtraRecipients WHERE Id = ?", (recipient_id,))
+
+
+def digest_recipients():
+    """Everyone who should receive the weekly digests: opted-in active users plus
+    the managed extra-recipient list. De-duplicated, case-insensitive."""
+    emails = [u["Email"] for u in list_users(active_only=True)
+              if u["Email"] and u["ReceivesDigest"]]
+    emails += [r["Email"] for r in list_extra_recipients() if r["Email"]]
+    seen, out = set(), []
+    for e in emails:
+        if e.lower() not in seen:
+            seen.add(e.lower())
+            out.append(e)
+    return sorted(out)
 
 
 # ---------------------------------------------------------------- email log

@@ -106,6 +106,8 @@ if (-not $SkipTasks) {
         /TR "`"$python`" `"$AppDir\send_reminders.py`"" | Out-Null
     schtasks /Create /F /TN "IssueTracker Weekly Digest" /SC WEEKLY /D FRI /ST 07:00 /RU SYSTEM `
         /TR "`"$python`" `"$AppDir\send_digest.py`"" | Out-Null
+    schtasks /Create /F /TN "IssueTracker Project Digest" /SC WEEKLY /D FRI /ST 07:05 /RU SYSTEM `
+        /TR "`"$python`" `"$AppDir\send_project_digest.py`"" | Out-Null
     schtasks /Create /F /TN "IssueTracker DB Backup" /SC DAILY /ST 02:00 /RU SYSTEM `
         /TR "powershell -NoProfile -ExecutionPolicy Bypass -File `"$AppDir\backup_db.ps1`"" | Out-Null
 

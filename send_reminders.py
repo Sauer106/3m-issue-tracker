@@ -9,8 +9,10 @@ from collections import defaultdict
 from html import escape
 
 import db
+import email_style as es
 import reporting
 from mailer import send_email
+from send_digest import latest_update_map
 
 
 def find_delinquent_issues(week_start):
@@ -27,22 +29,25 @@ def find_delinquent_issues(week_start):
 
 
 def build_body(user_name, issues, deadline, app_url):
-    rows = "".join(
-        f"<tr><td>#{i['Id']}</td><td>{escape(i['Title'])}</td>"
-        f"<td>{escape(i['Status'])}</td><td>{i['CreatedAt']:%Y-%m-%d}</td></tr>"
-        for i in issues
+    updates = latest_update_map([i["Id"] for i in issues])
+    count = len(issues)
+    intro = (
+        f"Hi {escape(user_name)}, you have <b>{count} issue{'s' if count != 1 else ''}</b> "
+        "assigned to you (or reported by you and unassigned) with <b>no update this week</b>. "
+        f"Please add an update by <b>{deadline:%A, %B %d} at 2:00 PM Eastern</b> "
+        "so they make Friday's digest."
     )
-    return f"""
-    <p>Hi {escape(user_name)},</p>
-    <p>The following 3M issues assigned to you (or reported by you and unassigned)
-    have <b>no update this week</b>. Updates are due by
-    <b>{deadline:%A, %B %d} at 2:00 PM EST</b> so they make Friday's digest.</p>
-    <table border="1" cellpadding="6" cellspacing="0">
-      <tr><th>ID</th><th>Title</th><th>Status</th><th>Opened</th></tr>
-      {rows}
-    </table>
-    <p><a href="{app_url}">Open the 3M Issues & Projects Tracker</a> to add your updates.</p>
-    """
+    inner = (
+        es.intro_row(intro)
+        + es.section_row("Needs an update from you")
+        + es.table_row(es.item_table(issues, updates), bottom=4)
+    )
+    footer = ("You are receiving this because these issues are assigned to you or you "
+              "reported them. This is an automated message from the 3M Issues &amp; Projects Tracker.")
+    subtitle = f"Update Reminder &nbsp;&middot;&nbsp; due {deadline:%B %d}"
+    link = app_url.rstrip("/") + "/?page=Issues&amp;mine=1&amp;needsupdate=1"
+    return es.shell(subtitle, inner, link, footer, button_text="Open My Issues",
+                    title="3M Issues")
 
 
 def main():
@@ -62,10 +67,10 @@ def main():
     for issue in issues:
         owner_id = issue["AssignedTo"] or issue["ReportedBy"]
         owner = users.get(owner_id)
-        if owner and owner["IsActive"] and owner["Email"]:
+        if owner and owner["IsActive"] and owner["Email"] and owner["ReceivesReminders"]:
             by_user[owner_id].append(issue)
         else:
-            print(f"Skipping issue #{issue['Id']}: owner inactive or has no email.")
+            print(f"Skipping issue #{issue['Id']}: owner inactive, no email, or reminders off.")
 
     sent = 0
     for owner_id, owner_issues in by_user.items():
@@ -76,7 +81,7 @@ def main():
         ]
         if not to_send:
             continue
-        subject = f"[3M Issues & Projects Tracker] Update needed on {len(to_send)} issue(s) by Thursday 2:00 PM"
+        subject = "3M Update Reminder"
         try:
             send_email(config, [owner["Email"]], subject,
                        build_body(owner["DisplayName"], to_send, deadline, app_url))

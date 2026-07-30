@@ -2,12 +2,14 @@
 
 Run with:  streamlit run app.py --server.address 0.0.0.0 --server.port 8501
 """
+import csv
 import html
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import pyotp
 import qrcode
 import streamlit as st
@@ -15,7 +17,11 @@ import streamlit.components.v1 as components
 
 import auth
 import db
+import mailer
 import reporting
+import send_digest
+import send_project_digest
+import send_reminders
 
 STATUSES = ["Open", "In Progress", "Waiting on Solventum", "Hold", "Closed"]
 PROJECT_STATUSES = ["Planned", "In Progress", "On Hold", "Completed", "Cancelled"]
@@ -298,6 +304,7 @@ def render_attachments(kind, parent_id, user, log_update, read_only=False):
                 if c3.button("🗑", key=f"datt_{kind}_{a['Id']}", use_container_width=True,
                              help="Delete attachment"):
                     db.delete_attachment(a["Id"])
+                    db.audit(user["Id"], "delete_attachment", f"{kind} #{parent_id}: {a['FileName']}")
                     log_update(json.dumps([{"field": "Attachment", "old": a["FileName"], "new": ""}]))
                     st.rerun()
 
@@ -653,17 +660,26 @@ def page_issues(user, config):
             del st.session_state[k]
         new_issue_dialog(user)
     with st.container(border=True):
-        col1, col2, col3 = st.columns([2, 2, 1], vertical_alignment="bottom")
+        col1, col2, col3, col4 = st.columns([3, 3, 1.6, 1.6], vertical_alignment="center")
         status_filter = col1.multiselect("Status", STATUSES,
                                          default=["Open", "In Progress", "Waiting on Solventum", "Hold"])
         search = col2.text_input("Search title/description")
-        mine_only = col3.checkbox("Mine only")
+        mine_only = col3.checkbox("Mine only",
+                                  value=st.session_state.pop("filter_mine_default", False))
+        needs_update = col4.checkbox("Needs update",
+                                     value=st.session_state.pop("filter_needs_default", False),
+                                     help="Open / In Progress issues with no update since the last deadline")
+    deadline = reporting.last_deadline(config)
 
     @st.fragment(run_every="10s")
     def issue_cards():
         issues = db.list_issues(statuses=status_filter or None)
         if mine_only:
-            issues = [i for i in issues if user["Id"] in (i["AssignedTo"], i["ReportedBy"])]
+            issues = [i for i in issues if i["AssignedTo"] == user["Id"]]
+        if needs_update:
+            issues = [i for i in issues
+                      if i["Status"] in ("Open", "In Progress")
+                      and (i["LastUpdateAt"] is None or i["LastUpdateAt"] < deadline)]
         if search:
             s = search.lower()
             issues = [i for i in issues if s in i["Title"].lower() or s in i["Description"].lower()]
@@ -720,12 +736,14 @@ def issue_detail(issue_id, user):
         if user["IsAdmin"] and st.button("🔓 Take over editing (admin)",
                                          key=f"takeover_{page_key}"):
             db.take_lock(page_key, user["Id"])
+            db.audit(user["Id"], "take_lock", page_key)
             st.rerun()
     if editable and (user["IsAdmin"] or issue["ReportedBy"] == user["Id"]):
         with h2.popover("🗑 Delete", use_container_width=True):
             st.warning("Permanently delete this issue and its entire history?")
             if st.button("Yes, delete permanently", type="primary", key=f"delissue_{issue_id}"):
                 db.delete_issue(issue_id)
+                db.audit(user["Id"], "delete_issue", f"#{issue_id} {issue['Title']}")
                 st.session_state.selected_issue = None
                 st.toast(f"Issue #{issue_id} deleted.")
                 st.rerun()
@@ -857,7 +875,10 @@ def issue_detail(issue_id, user):
         if others:
             st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", "#0288d1")
                                 for o in others), unsafe_allow_html=True)
-        render_history(db.list_updates(issue_id), on_delete=db.delete_update,
+        def _del_update(uid):
+            db.delete_update(uid)
+            db.audit(user["Id"], "delete_update", f"issue #{issue_id} update {uid}")
+        render_history(db.list_updates(issue_id), on_delete=_del_update,
                        can_delete=lambda u: user["IsAdmin"] or u["AuthorId"] == user["Id"],
                        proposal_allowed=user["IsAdmin"] or issue["AssignedTo"] == user["Id"],
                        on_proposal=decide_proposal)
@@ -890,7 +911,7 @@ def page_projects(user, config):
     def project_cards():
         projects = db.list_projects(statuses=status_filter or None)
         if mine_only:
-            projects = [p for p in projects if user["Id"] in (p["AssignedTo"], p["CreatedBy"])]
+            projects = [p for p in projects if p["AssignedTo"] == user["Id"]]
         if search:
             s = search.lower()
             projects = [p for p in projects if s in p["Title"].lower() or s in p["Summary"].lower()]
@@ -946,12 +967,14 @@ def project_detail(project_id, user):
         if user["IsAdmin"] and st.button("🔓 Take over editing (admin)",
                                          key=f"takeover_{page_key}"):
             db.take_lock(page_key, user["Id"])
+            db.audit(user["Id"], "take_lock", page_key)
             st.rerun()
     if editable and (user["IsAdmin"] or proj["CreatedBy"] == user["Id"]):
         with h2.popover("🗑 Delete", use_container_width=True):
             st.warning("Permanently delete this project and its entire history?")
             if st.button("Yes, delete permanently", type="primary", key=f"delproj_{project_id}"):
                 db.delete_project(project_id)
+                db.audit(user["Id"], "delete_project", f"#{project_id} {proj['Title']}")
                 st.session_state.selected_project = None
                 st.toast(f"Project #{project_id} deleted.")
                 st.rerun()
@@ -1050,10 +1073,125 @@ def project_detail(project_id, user):
         if others:
             st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", "#0288d1")
                                 for o in others), unsafe_allow_html=True)
-        render_history(db.list_project_updates(project_id), on_delete=db.delete_project_update,
+        def _del_pupdate(uid):
+            db.delete_project_update(uid)
+            db.audit(user["Id"], "delete_update", f"project #{project_id} update {uid}")
+        render_history(db.list_project_updates(project_id), on_delete=_del_pupdate,
                        can_delete=lambda u: user["IsAdmin"] or u["AuthorId"] == user["Id"])
 
     live_history()
+
+
+# ---------------------------------------------------------------- dashboard
+
+def _bar(counts, x_label):
+    """A small bar chart from a {category: count} dict, largest first."""
+    if not counts:
+        st.caption("Nothing to show yet.")
+        return
+    items = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    df = pd.DataFrame({x_label: [k for k, _ in items], "Count": [v for _, v in items]})
+    st.bar_chart(df, x=x_label, y="Count", color="#1976d2", height=260)
+
+
+def _csv_dt(dt):
+    """Clean, spreadsheet-friendly timestamp (blank if none)."""
+    return f"{dt:%Y-%m-%d %H:%M}" if dt else ""
+
+
+def _issues_csv(issues):
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["ID", "Title", "Status", "Major", "Solventum", "ServiceDesk", "Regions",
+                "Facilities", "Reported By", "Assigned To", "Created", "Updated", "Closed",
+                "Last Update"])
+    for i in issues:
+        w.writerow([i["Id"], i["Title"], i["Status"], "Yes" if i["IsMajor"] else "No",
+                    i["SolventumTicket"] or "", i["ServiceDeskTicket"] or "",
+                    "; ".join(json.loads(i["Regions"] or "[]")),
+                    "; ".join(json.loads(i["Facilities"] or "[]")),
+                    i["ReportedByName"], i["AssignedToName"] or "", _csv_dt(i["CreatedAt"]),
+                    _csv_dt(i["UpdatedAt"]), _csv_dt(i["ResolvedAt"]), _csv_dt(i["LastUpdateAt"])])
+    return buf.getvalue()
+
+
+def _projects_csv(projects):
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["ID", "Title", "Status", "Solventum", "ServiceDesk", "Regions", "Facilities",
+                "Created By", "Assigned To", "Created", "Updated", "Last Update"])
+    for p in projects:
+        w.writerow([p["Id"], p["Title"], p["Status"], p["SolventumTicket"] or "",
+                    p["ServiceDeskTicket"] or "", "; ".join(json.loads(p["Regions"] or "[]")),
+                    "; ".join(json.loads(p["Facilities"] or "[]")), p["CreatedByName"],
+                    p["AssignedToName"] or "", _csv_dt(p["CreatedAt"]), _csv_dt(p["UpdatedAt"]),
+                    _csv_dt(p["LastUpdateAt"])])
+    return buf.getvalue()
+
+
+def page_dashboard(user, config):
+    st.header("Dashboard")
+    issues = db.list_issues()
+    projects = db.list_projects()
+    deadline = reporting.last_deadline(config)
+    open_states = ("Open", "In Progress", "Waiting on Solventum", "Hold")
+
+    open_issues = [i for i in issues if i["Status"] in open_states]
+    closed_week = [i for i in issues if i["Status"] == "Closed"
+                   and i["ResolvedAt"] and i["ResolvedAt"] >= deadline]
+    needs = [i for i in open_issues if i["Status"] in ("Open", "In Progress")
+             and (i["LastUpdateAt"] is None or i["LastUpdateAt"] < deadline)]
+    active_projects = [p for p in projects if p["Status"] in ("Planned", "In Progress", "On Hold")]
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Open issues", len(open_issues))
+    c2.metric("Closed this week", len(closed_week))
+    c3.metric("Needs update", len(needs))
+    c4.metric("Active projects", len(active_projects))
+
+    now = datetime.now()
+    if open_issues:
+        ages = [(now - i["CreatedAt"]).days for i in open_issues]
+        a1, a2 = st.columns(2)
+        a1.metric("Avg age of open issues", f"{round(sum(ages) / len(ages))} days")
+        a2.metric("Oldest open issue", f"{max(ages)} days")
+
+    st.subheader("Issues by status")
+    by_status = {}
+    for i in issues:
+        by_status[i["Status"]] = by_status.get(i["Status"], 0) + 1
+    _bar(by_status, "Status")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Open issues by region")
+        by_region = {}
+        for i in open_issues:
+            for r in json.loads(i["Regions"] or "[]"):
+                by_region[r] = by_region.get(r, 0) + 1
+        _bar(by_region, "Region")
+    with col2:
+        st.subheader("Open issues by assignee")
+        by_assignee = {}
+        for i in open_issues:
+            name = i["AssignedToName"] or "Unassigned"
+            by_assignee[name] = by_assignee.get(name, 0) + 1
+        _bar(by_assignee, "Assignee")
+
+    st.subheader("Projects by status")
+    proj_status = {}
+    for p in projects:
+        proj_status[p["Status"]] = proj_status.get(p["Status"], 0) + 1
+    _bar(proj_status, "Status")
+
+    st.subheader("Export")
+    st.caption("Download the current data as a spreadsheet (opens in Excel).")
+    today = f"{now:%Y-%m-%d}"
+    e1, e2 = st.columns(2)
+    e1.download_button("⬇ Issues (CSV)", _issues_csv(issues), f"issues_{today}.csv",
+                       "text/csv", use_container_width=True)
+    e2.download_button("⬇ Projects (CSV)", _projects_csv(projects), f"projects_{today}.csv",
+                       "text/csv", use_container_width=True)
 
 
 # ---------------------------------------------------------------- admin
@@ -1077,6 +1215,8 @@ def page_admin(user, config):
                 else:
                     db.create_user(username.strip(), display_name.strip(), email.strip(),
                                    auth.hash_password(temp_password), is_admin, must_change=True)
+                    db.audit(user["Id"], "create_user",
+                             f"{username.strip()}" + (" (admin)" if is_admin else ""))
                     st.success(f"User '{username.strip()}' created. They'll be asked to "
                                "choose their own password on first login.")
 
@@ -1094,6 +1234,7 @@ def page_admin(user, config):
             if col3.button("Reset password", key=f"reset_{u['Id']}"):
                 if new_pw:
                     db.set_user_password(u["Id"], auth.hash_password(new_pw), must_change=True)
+                    db.audit(user["Id"], "reset_password", u["Username"])
                     st.success(f"Password reset for {u['Username']}. They'll be asked to "
                                "choose a new one at next login.")
                 else:
@@ -1101,15 +1242,87 @@ def page_admin(user, config):
             toggle_label = "Deactivate" if u["IsActive"] else "Reactivate"
             if col4.button(toggle_label, key=f"toggle_{u['Id']}"):
                 db.set_user_active(u["Id"], not u["IsActive"])
+                db.audit(user["Id"], "deactivate_user" if u["IsActive"] else "reactivate_user",
+                         u["Username"])
                 st.rerun()
             if u["Id"] != user["Id"]:
                 admin_label = "Remove admin" if u["IsAdmin"] else "Make admin"
                 if col4.button(admin_label, key=f"adm_{u['Id']}"):
                     db.set_user_admin(u["Id"], not u["IsAdmin"])
+                    db.audit(user["Id"], "remove_admin" if u["IsAdmin"] else "make_admin",
+                             u["Username"])
                     st.rerun()
             if u["TotpSecret"] and col4.button("Reset 2FA", key=f"totp_{u['Id']}"):
                 db.set_user_totp_secret(u["Id"], None)
+                db.audit(user["Id"], "reset_2fa", u["Username"])
                 st.success(f"2FA reset for {u['Username']}. They'll re-enroll at next login.")
+
+    st.subheader("Reassign work")
+    st.caption("Move all open issues and projects from one person to another — handy when "
+               "someone leaves or changes roles.")
+    all_users = db.list_users()
+    umap = {f"{u['DisplayName']} ({u['Username']})": u["Id"] for u in all_users}
+    rc1, rc2 = st.columns(2)
+    from_label = rc1.selectbox("From", list(umap), key="reassign_from")
+    to_label = rc2.selectbox("To", list(umap), key="reassign_to")
+    from_id, to_id = umap[from_label], umap[to_label]
+    n_issues = len([i for i in db.list_issues(
+        statuses=["Open", "In Progress", "Waiting on Solventum", "Hold"]) if i["AssignedTo"] == from_id])
+    n_projects = len([p for p in db.list_projects(
+        statuses=["Planned", "In Progress", "On Hold"]) if p["AssignedTo"] == from_id])
+    st.caption(f"**{from_label}** has **{n_issues}** open issue(s) and **{n_projects}** "
+               f"open project(s) assigned.")
+    if st.button("Reassign", type="primary", disabled=(from_id == to_id or n_issues + n_projects == 0)):
+        moved_i = db.reassign_issues(from_id, to_id)
+        moved_p = db.reassign_projects(from_id, to_id)
+        db.audit(user["Id"], "reassign",
+                 f"{from_label} -> {to_label}: {moved_i} issues, {moved_p} projects")
+        st.success(f"Reassigned {moved_i} issue(s) and {moved_p} project(s) to {to_label}.")
+        st.rerun()
+
+    st.subheader("Email recipients")
+    st.caption("Who receives the weekly digests and the Thursday update reminders. "
+               "Digests go to the opted-in users below plus any additional recipients.")
+
+    def _save_prefs(uid, dkey, rkey):
+        db.set_user_email_prefs(uid, st.session_state[dkey], st.session_state[rkey])
+
+    hdr = st.columns([3, 1, 1], vertical_alignment="bottom")
+    hdr[1].markdown("**Digests**")
+    hdr[2].markdown("**Reminders**")
+    for u in db.list_users(active_only=True):
+        c1, c2, c3 = st.columns([3, 1, 1], vertical_alignment="center")
+        c1.markdown(f"**{u['DisplayName']}**  \n<span class='issue-meta'>{html.escape(u['Email'])}</span>",
+                    unsafe_allow_html=True)
+        dkey, rkey = f"dig_{u['Id']}", f"rem_{u['Id']}"
+        c2.checkbox("Digests", value=bool(u["ReceivesDigest"]), key=dkey,
+                    label_visibility="collapsed", on_change=_save_prefs, args=(u["Id"], dkey, rkey))
+        c3.checkbox("Reminders", value=bool(u["ReceivesReminders"]), key=rkey,
+                    label_visibility="collapsed", on_change=_save_prefs, args=(u["Id"], dkey, rkey))
+
+    with st.expander("Additional digest recipients (managers or lists that aren't app users)"):
+        with st.form("add_extra_recipient", clear_on_submit=True):
+            c1, c2, c3 = st.columns([3, 2, 1], vertical_alignment="bottom")
+            xemail = c1.text_input("Email")
+            xlabel = c2.text_input("Label (optional)")
+            if c3.form_submit_button("Add", use_container_width=True):
+                if xemail.strip():
+                    db.add_extra_recipient(xemail.strip(), xlabel.strip() or None)
+                    db.audit(user["Id"], "add_recipient", xemail.strip())
+                    st.rerun()
+                else:
+                    st.error("Enter an email address.")
+        extras = db.list_extra_recipients()
+        if not extras:
+            st.caption("None yet. Digests currently go only to opted-in users above.")
+        for r in extras:
+            c1, c2 = st.columns([5, 1], vertical_alignment="center")
+            c1.markdown(f"{html.escape(r['Email'])}"
+                        + (f" — {html.escape(r['Label'])}" if r["Label"] else ""))
+            if c2.button("Remove", key=f"xr_{r['Id']}", use_container_width=True):
+                db.delete_extra_recipient(r["Id"])
+                db.audit(user["Id"], "remove_recipient", r["Email"])
+                st.rerun()
 
     st.subheader("Regions & Facilities")
     st.caption("Changes apply to new tagging immediately. Items already tagged with a "
@@ -1139,6 +1352,7 @@ def page_admin(user, config):
                         st.error("Couldn't rename - does that name already exist?")
             if c3.button("Delete", key=f"rdel_{r['Id']}", use_container_width=True):
                 db.delete_region(r["Id"])
+                db.audit(user["Id"], "delete_region", r["Name"])
                 st.rerun()
 
             st.markdown("**Facilities** (name · code)")
@@ -1154,6 +1368,7 @@ def page_admin(user, config):
                         st.rerun()
                 if c4.button("Delete", key=f"fd_{f['Id']}", use_container_width=True):
                     db.delete_facility(f["Id"])
+                    db.audit(user["Id"], "delete_facility", f"{r['Name']}: {f['Name']}")
                     st.rerun()
 
             with st.form(f"add_fac_{r['Id']}", clear_on_submit=True):
@@ -1164,6 +1379,53 @@ def page_admin(user, config):
                     if af_name.strip():
                         db.create_facility(r["Id"], af_name.strip(), af_code.strip() or None)
                         st.rerun()
+
+    st.subheader("Email tools")
+    st.caption("Preview the emails or trigger a real send. Test buttons go only to you; "
+               "'Send now to everyone' respects the once-per-week guard.")
+    me = user["Email"]
+    t1, t2, t3 = st.columns(3)
+    if t1.button("Test issue digest to me", use_container_width=True):
+        subj, body = send_digest.render(config)
+        mailer.send_email(config, [me], subj + " (test)", body)
+        st.success(f"Sent to {me}")
+    if t2.button("Test project digest to me", use_container_width=True):
+        subj, body = send_project_digest.render(config)
+        mailer.send_email(config, [me], subj + " (test)", body)
+        st.success(f"Sent to {me}")
+    if t3.button("Test reminder to me", use_container_width=True):
+        mine = [i for i in db.list_issues(statuses=["Open", "In Progress"])
+                if user["Id"] in (i["AssignedTo"], i["ReportedBy"])]
+        body = send_reminders.build_body(user["DisplayName"], mine[:10],
+                                         reporting.upcoming_deadline(config),
+                                         config["app"].get("app_url", ""))
+        mailer.send_email(config, [me], "3M Update Reminder (test)", body)
+        st.success(f"Sent to {me}")
+    with st.popover("Send now to everyone…"):
+        st.warning("These send to all recipients immediately (skips if already sent this week).")
+        if st.button("Send issue digest now"):
+            send_digest.main()
+            db.audit(user["Id"], "send_issue_digest", "manual")
+            st.success("Issue digest sent (or already sent this week).")
+        if st.button("Send project digest now"):
+            send_project_digest.main()
+            db.audit(user["Id"], "send_project_digest", "manual")
+            st.success("Project digest sent (or already sent this week).")
+
+    st.subheader("Audit log")
+    st.caption("Deletions and administrative actions, most recent first.")
+    entries = db.list_audit(200)
+    if not entries:
+        st.caption("No activity recorded yet.")
+    else:
+        for e in entries:
+            who = html.escape(e["ActorName"] or "unknown")
+            detail = f" — {html.escape(e['Detail'])}" if e["Detail"] else ""
+            st.markdown(
+                f"<div style='padding:2px 0'>{chip(e['Action'], '#5d4037')} "
+                f"<b>{who}</b><span class='issue-meta'>{detail} · {fmt_dt(e['CreatedAt'])}</span></div>",
+                unsafe_allow_html=True,
+            )
 
 
 # ---------------------------------------------------------------- main
@@ -1291,13 +1553,29 @@ def main():
             font-size: 0.8rem;
             margin-right: 0.3rem;
         }
+        /* Keep filter checkbox labels on one line so they align */
+        div[data-testid="stCheckbox"] label p { white-space: nowrap; }
         </style>
     """, unsafe_allow_html=True)
 
-    pages = ["Issues", "Projects"]
+    pages = ["Issues", "Projects", "Dashboard"]
     if user["IsAdmin"]:
         pages.append("Admin")
-    icons = {"Issues": "📋", "Projects": "🗂️", "Admin": "⚙️"}
+    icons = {"Issues": "📋", "Projects": "🗂️", "Dashboard": "📊", "Admin": "⚙️"}
+
+    # Deep links from the emails: ?page=Issues|Projects, and ?mine=1 to open the
+    # Issues list already filtered to the current user's items. Apply once.
+    if not st.session_state.get("deeplink_applied"):
+        st.session_state.deeplink_applied = True
+        qp = st.query_params
+        target = qp.get("page")
+        if target in pages:
+            st.session_state.page = target
+        if qp.get("mine") == "1":
+            st.session_state.filter_mine_default = True
+        if qp.get("needsupdate") == "1":
+            st.session_state.filter_needs_default = True
+
     if st.session_state.get("page") not in pages:
         st.session_state.page = pages[0]
 
@@ -1324,6 +1602,8 @@ def main():
         page_issues(user, config)
     elif page == "Projects":
         page_projects(user, config)
+    elif page == "Dashboard":
+        page_dashboard(user, config)
     elif page == "Admin":
         page_admin(user, config)
 

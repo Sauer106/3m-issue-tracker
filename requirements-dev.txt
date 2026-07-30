@@ -1,0 +1,5 @@
+# Test/dev dependencies (not needed to run the app). Install with:
+#   .\venv\Scripts\pip install -r requirements-dev.txt
+# Run the tests with:
+#   .\venv\Scripts\python -m pytest
+pytest>=8
