@@ -10,17 +10,18 @@ For installing, TLS certificates, the reverse proxy, and other server work, see 
 
 1. [Who is an admin](#who-is-an-admin)
 2. [The Admin page](#the-admin-page)
-3. [Managing users](#managing-users)
-4. [Managing regions and facilities](#managing-regions-and-facilities)
-5. [Moderating and the recycle bin](#moderating-and-the-recycle-bin)
-6. [Fix proposals and edit locks](#fix-proposals-and-edit-locks)
-7. [Reassigning work](#reassigning-work)
-8. [Email recipients and tools](#email-recipients-and-tools)
-9. [The audit log](#the-audit-log)
-10. [Reporting and exports](#reporting-and-exports)
-11. [Backups](#backups)
-12. [Handling common user problems](#handling-common-user-problems)
-13. [Security notes](#security-notes)
+3. [Bug reports and diagnostics](#bug-reports-and-diagnostics)
+4. [Managing users](#managing-users)
+5. [Managing regions and facilities](#managing-regions-and-facilities)
+6. [Moderating and the recycle bin](#moderating-and-the-recycle-bin)
+7. [Fix proposals and edit locks](#fix-proposals-and-edit-locks)
+8. [Reassigning work](#reassigning-work)
+9. [Email recipients and tools](#email-recipients-and-tools)
+10. [The audit log](#the-audit-log)
+11. [Reporting and exports](#reporting-and-exports)
+12. [Backups](#backups)
+13. [Handling common user problems](#handling-common-user-problems)
+14. [Security notes](#security-notes)
 
 ---
 
@@ -43,8 +44,24 @@ Click **Admin** in the sidebar. It gathers everything admin-only in one place:
 - **Email tools** — test or send the digests on demand.
 - **Recycle bin** — restore or permanently remove deleted items.
 - **Audit log** — a record of deletions and admin actions.
+- **System diagnostics** — a health readout (see below).
 
 There's also a **Dashboard** card (visible to everyone) with metrics, charts, and spreadsheet exports.
+
+---
+
+## Bug reports and diagnostics
+
+**Where bug reports go.** Any user can file a bug from the **🐛 Report a Bug** link in the page footer. Each report is emailed to **all active administrators** (and copied to the reporter), and recorded in the audit log with a reference number. The email includes what they described, the severity and page they chose, any screenshot they attached, and an **Environment** block (app version and build, Python/Streamlit/pyodbc versions, the configured and installed ODBC drivers, and the SQL Server version) — so you can usually diagnose without going back and forth.
+
+**System diagnostics.** On the Admin page, expand **🩺 System diagnostics** for a live health readout:
+
+- **Application** — version and build (the git commit and deploy date), plus Python, Streamlit, and pyodbc versions, and the server's local time.
+- **Database** — the configured ODBC driver, which SQL Server drivers are actually installed, and the SQL Server version.
+- **Backups** — when the last database backup ran, how many exist, their total size, and a ⚠️ flag if the newest is more than about a day old.
+- **Scheduled tasks** — click **Check task status** to see whether each of the app's scheduled tasks is running/ready.
+
+This is the first place to look if something seems off (emails not sending, the app behaving oddly) — it surfaces the driver/version mismatches and stale-backup conditions that cause most problems.
 
 ---
 
@@ -142,7 +159,7 @@ Under **Email recipients**, every active user has two checkboxes:
 
 Toggle either off and that person stops getting that email. Below the list, **Additional digest recipients** lets you add managers or distribution lists that aren't app users (an email plus an optional label) so they receive the digests too. This fully replaces the old config-file recipient list.
 
-The app also sends **immediate notifications** — an assignment email when an issue/project is assigned to someone, and a mention email when a user is written as `@username` in a comment. Those always go to the affected person.
+The app also sends **immediate notifications** — an assignment email when an issue/project is assigned to someone, a mention email when a user is written as `@username` in a comment, and an **overdue-milestone** email to a project's owner the day one of its milestones slips past its date (once per milestone). Those always go to the affected person, subject to their Reminders setting for the milestone one.
 
 ### Testing and sending on demand
 
@@ -153,13 +170,13 @@ Under **Email tools**:
 
 ### How the scheduled emails run
 
-Three scheduled tasks run on the server and send through the internal relay: the **reminder** (Thursday), the **issue digest** (Friday), and the **project digest** (Friday, a few minutes later). If emails aren't arriving, the usual cause is the mail relay not permitting the server to send — a relay-side allowlist handled by whoever runs the mail system, not something in the app.
+Scheduled tasks run on the server and send through the internal relay: the **reminder** (Thursday), the **issue digest** (Friday), the **project digest** (Friday, a few minutes later), and a daily **milestone reminder** (each morning) that emails owners about milestones that have just gone overdue. If emails aren't arriving, the usual cause is the mail relay not permitting the server to send — a relay-side allowlist handled by whoever runs the mail system, not something in the app.
 
 ---
 
 ## The audit log
 
-The **Audit log** section lists the accountability-relevant actions, most recent first: deletions and restores, user management (create, reset password, reset 2FA, activate/deactivate, promote/demote), region and facility deletes, recipient changes, lock takeovers, reassignments, and manual email sends. Each entry shows who did it and when.
+The **Audit log** section lists the accountability-relevant actions, most recent first: deletions and restores, user management (create, reset password, reset 2FA, activate/deactivate, promote/demote), region and facility deletes, recipient changes, lock takeovers, reassignments, manual email sends, calendar event and milestone changes, and bug reports. Each entry shows who did it and when.
 
 It doesn't record ordinary edits (those already live in each item's own history) — it's the record of the powerful and destructive actions, the things you'd want to answer "who did that?" about later.
 

@@ -14,13 +14,16 @@ The app lives at **https://3mtracking.uhsinc.com**. It works in any modern brows
 4. [Getting around](#getting-around)
 5. [Issues](#issues)
 6. [Projects](#projects)
-7. [Regions and facilities](#regions-and-facilities)
-8. [The history timeline](#the-history-timeline)
-9. [Attachments](#attachments)
-10. [The dashboard](#the-dashboard)
-11. [Working at the same time as others](#working-at-the-same-time-as-others)
-12. [Emails and notifications](#emails-and-notifications)
-13. [Frequently asked questions](#frequently-asked-questions)
+7. [Milestones](#milestones)
+8. [Calendar](#calendar)
+9. [Regions and facilities](#regions-and-facilities)
+10. [The history timeline](#the-history-timeline)
+11. [Attachments](#attachments)
+12. [The dashboard](#the-dashboard)
+13. [Working at the same time as others](#working-at-the-same-time-as-others)
+14. [Emails and notifications](#emails-and-notifications)
+15. [Getting help and reporting a bug](#getting-help-and-reporting-a-bug)
+16. [Frequently asked questions](#frequently-asked-questions)
 
 ---
 
@@ -69,10 +72,13 @@ The sidebar on the left is your navigation. It shows a card for each area:
 
 - **Issues** — the running list of issues.
 - **Projects** — the running list of projects.
+- **Calendar** — a month view of scheduled events (go-lives, deadlines).
 - **Dashboard** — metrics and charts across all the work.
 - **Admin** — only appears if you're an administrator.
 
 Click a card to switch areas. The card you're on is highlighted. Your name and the current update deadline show at the top of the sidebar.
+
+At the very bottom of every page there's a small footer showing the version and two links: **❓ Help & FAQ** and **🐛 Report a Bug** (see [Getting help](#getting-help-and-reporting-a-bug)).
 
 ---
 
@@ -175,7 +181,34 @@ What's different from issues:
 - There's no Major flag and no fix proposals (those are for issues).
 - The person who made it is the **creator** rather than a reporter.
 
+- Projects can have **milestones** (see below); issues use a single due date instead.
+
 Everything else is the same: assignee, Solventum and ServiceDesk tickets, regions and facilities, attachments, the update form, and the history timeline all behave just like issues.
+
+---
+
+## Milestones
+
+A project can have as many **milestones** as you like — named checkpoints, each with an optional target date (for example "Build complete", "UAT", "Go-Live"). Open a project to find the **🎯 Milestones** section.
+
+- **Add one** with the small form at the bottom: type a name, optionally pick a target date, and click **Add**.
+- **Mark it done** with the **Done** button when it's finished (it turns into a green ✓). Changed your mind? **Reopen** it.
+- **Remove one** with the 🗑 button.
+
+On the Projects list, each project card shows its **next open milestone** as a chip — red if the date has already passed. Adding, completing, or removing a milestone is recorded in the project's history, and overdue milestones show up on the dashboard and in the weekly project digest (their owner also gets an email the day one slips past its date).
+
+---
+
+## Calendar
+
+The **Calendar** card is a month view of scheduled **events** — things like go-lives and deadlines, optionally tied to one or more projects.
+
+- Move between months with **◀ Prev** / **Next ▶**, or jump back with **Today**. Today's date is outlined.
+- Each event shows as a small colored bar on its day: **green** for Go-Live, **red** for Deadline, **orange** for Projected Go-Live. Click a bar to open the event. Below the grid, an **Agenda** lists the same events for the month with an **Open** button on each.
+- **➕ New Event** creates one: give it a title, a date, optionally a start time and a multi-day end date, a category, a description, and link any projects it relates to.
+- Opening an event shows its details and a button to **open each linked project**. From a project, the **📅 Calendar** section lists its linked events with a button to open each — so you can hop between an event and its projects in either direction.
+
+You can edit or delete an event you created; administrators can edit any. Others see it read-only.
 
 ---
 
@@ -229,8 +262,10 @@ Uploads and deletions show up in the history, so there's a record of what was at
 
 The **Dashboard** card gives you the big picture across all issues and projects:
 
-- Headline numbers: open issues, overdue, closed this week, needing an update, and active projects.
+- Headline numbers: open issues, overdue issues, closed this week, needing an update, active projects, and overdue milestones.
 - How old the open issues are, on average and at the oldest.
+- **⚠️ Overdue milestones** — any project milestone that's past its date, with how many days overdue and a button to open the project.
+- **Upcoming — next 30 days** — the calendar events coming up, each linking to the event.
 - Charts of issues by status, open issues by region and by assignee, and projects by status.
 - An **Export** section with buttons to download the issues or projects as a spreadsheet (they open in Excel), handy for status reports.
 
@@ -261,12 +296,24 @@ Administrators can take over a lock immediately if they need to.
 - **Friday morning issue digest** — a summary of the week's issues to everyone: what's open, new, closed, and missing an update.
 - **Friday morning project digest** — a separate summary of active and recently completed projects.
 
+The Friday project digest also flags any **overdue milestones** and the **upcoming events** for the next 30 days.
+
 **Notifications (sent right away):**
 
 - **Assignment** — when an issue or project is assigned to you, you get an email with a link to it.
 - **Mention** — when someone writes **@yourusername** in a comment, you get an email with the comment and a link.
+- **Overdue milestone** — if a project assigned to you has a milestone slip past its date, you get an email (once per milestone) with a link to the project.
 
 Every email button takes you straight to the relevant issue, project, or list. An administrator can control who receives the digests and reminders.
+
+---
+
+## Getting help and reporting a bug
+
+Every page has a small footer at the very bottom with two links:
+
+- **❓ Help & FAQ** — a quick reference with answers to the most common questions (signing in, 2FA, statuses, regions, and more). Good for a fast refresher without leaving the page.
+- **🐛 Report a Bug** — found something wrong? Tell us here. Pick where it happened and how bad it is, describe what you expected versus what happened, and optionally attach a screenshot. It goes straight to the administrators (and you get a copy), with a reference number so it can be followed up.
 
 ---
 

@@ -8,7 +8,7 @@ People log in, file an issue or start a project, and everyone can follow it as i
 
 Issues move through Open, In Progress, Waiting on Solventum, Hold, and Closed. Projects have their own set of states, since project work doesn't really "resolve" the way a issue does. Anything flagged major gets an extra prompt when it closes, asking whether the fix went out to every region, and that answer lands in the record too.
 
-There is a bit more that helps day to day. You can put a due date on an issue and it flags itself once it goes overdue. You get an email the moment something lands on your plate or someone mentions you by name in a comment. A dashboard rolls the whole thing up into counts and charts, and you can pull the data down to a spreadsheet whenever someone needs a report. Admins get a recycle bin for anything deleted by mistake and a running log of who did what.
+There is a bit more that helps day to day. You can put a due date on an issue and it flags itself once it goes overdue. Projects can carry as many milestones as they need, each with its own target date, and the app watches for any that slip past. A calendar lays out the go live and deadline dates for the month, and you can tie those events back to the projects they belong to and jump between the two. You get an email the moment something lands on your plate, someone mentions you by name, or a milestone of yours goes overdue. A dashboard rolls the whole thing up into counts and charts, including what is overdue and what is coming up, and you can pull the data down to a spreadsheet whenever someone needs a report. Every page carries a help panel and a way to report a bug in the footer, and admins get a recycle bin for anything deleted by mistake, a health readout for the server, and a running log of who did what.
 
 ## Signing in
 
@@ -26,7 +26,7 @@ Once it's up, the team reaches it at https://3mtracking.uhsinc.com.
 
 ## Email
 
-A few jobs run on a schedule. One goes out Thursday morning and reminds people about issues that haven't moved. Two more go out Friday, one summing up the issues for the week and one for the projects. On top of those the app sends a quick note whenever work is assigned to you or someone mentions you. It sends through the internal relay, and an admin decides who is on the list.
+A few jobs run on a schedule. One goes out Thursday morning and reminds people about issues that haven't moved. Two more go out Friday, one summing up the issues for the week and one for the projects. Another runs each morning and tells a project owner when one of their milestones has just gone past its date. On top of those the app sends a quick note whenever work is assigned to you or someone mentions you. It sends through the internal relay, and an admin decides who is on the list.
 
 ## Backups
 

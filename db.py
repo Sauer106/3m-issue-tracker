@@ -353,28 +353,23 @@ def get_project(project_id):
 
 
 def create_project(title, summary, created_by, assigned_to=None,
-                   solventum_ticket=None, servicedesk_ticket=None, regions=None, facilities=None,
-                   target_date=None):
+                   solventum_ticket=None, servicedesk_ticket=None, regions=None, facilities=None):
     return insert_returning_id(
         """INSERT INTO Projects (Title, Summary, CreatedBy, AssignedTo, SolventumTicket,
-                                 ServiceDeskTicket, Regions, Facilities, TargetDate)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                 ServiceDeskTicket, Regions, Facilities)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (title, summary, created_by, assigned_to, solventum_ticket, servicedesk_ticket,
-         regions, facilities, target_date),
+         regions, facilities),
     )
 
 
 def set_project_fields(project_id, status=None, assigned_to="__unchanged__",
                        solventum_ticket="__unchanged__", servicedesk_ticket="__unchanged__",
-                       regions="__unchanged__", facilities="__unchanged__",
-                       target_date="__unchanged__"):
+                       regions="__unchanged__", facilities="__unchanged__"):
     sets, params = ["UpdatedAt = SYSDATETIME()"], []
     if status is not None:
         sets.append("Status = ?")
         params.append(status)
-    if target_date != "__unchanged__":
-        sets.append("TargetDate = ?")
-        params.append(target_date)
     if assigned_to != "__unchanged__":
         sets.append("AssignedTo = ?")
         params.append(assigned_to)
@@ -578,17 +573,6 @@ def list_events_for_project(project_id):
         EVENT_SELECT + """ JOIN CalendarEventProjects ep ON ep.EventId = e.Id
            WHERE ep.ProjectId = ? ORDER BY e.EventDate, e.EventTime""",
         (project_id,),
-    )
-
-
-def list_projects_with_target(start_date, end_date):
-    """Non-deleted projects whose TargetDate falls in [start_date, end_date]."""
-    return query(
-        """SELECT p.Id, p.Title, p.Status, p.TargetDate, a.DisplayName AS AssignedToName
-           FROM Projects p LEFT JOIN Users a ON a.Id = p.AssignedTo
-           WHERE p.DeletedAt IS NULL AND p.TargetDate BETWEEN ? AND ?
-           ORDER BY p.TargetDate, p.Title""",
-        (start_date, end_date),
     )
 
 

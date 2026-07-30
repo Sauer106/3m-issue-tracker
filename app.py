@@ -38,7 +38,7 @@ REGIONS = db.get_region_map()
 
 st.set_page_config(page_title="3M Issues & Projects Tracker", page_icon="🎯", layout="wide")
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 REPO_URL = "https://github.com/Sauer106/3m-issue-tracker"
 PY_VERSION = "%d.%d.%d" % sys.version_info[:3]
 ST_VERSION = st.__version__
@@ -1664,7 +1664,7 @@ def page_dashboard(user, config):
     overdue_ms = db.list_overdue_milestones()
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Open issues", len(open_issues))
-    c2.metric("Overdue", len(overdue))
+    c2.metric("Overdue issues", len(overdue))
     c3.metric("Closed this week", len(closed_week))
     c4.metric("Needs update", len(needs))
     c5.metric("Active projects", len(active_projects))
