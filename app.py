@@ -6,6 +6,7 @@ import csv
 import html
 import io
 import json
+import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -34,6 +35,9 @@ REGIONS = db.get_region_map()
 st.set_page_config(page_title="3M Issues & Projects Tracker", page_icon="🎯", layout="wide")
 
 APP_VERSION = "1.1.0"
+REPO_URL = "https://github.com/Sauer106/3m-issue-tracker"
+PY_VERSION = "%d.%d.%d" % sys.version_info[:3]
+ST_VERSION = st.__version__
 
 
 STATUS_COLORS = {"Open": "#1976d2", "In Progress": "#7b1fa2", "Resolved": "#388e3c", "Closed": "#616161",
@@ -1869,6 +1873,9 @@ def render_footer():
         }
         .app-footer strong { color: rgba(128, 128, 128, 0.95); font-weight: 600; }
         .app-footer .sep { margin: 0 0.5rem; opacity: 0.5; }
+        .app-footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+        .app-footer a:hover { color: #ff4b4b; }
+        .app-footer-meta { margin-top: 0.25rem; font-size: 0.72rem; opacity: 0.8; }
         /* Make the footer action buttons read like quiet text links */
         [class*="st-key-footer_"] button {
             border: none;
@@ -1901,8 +1908,11 @@ def render_footer():
         <div class='app-footer'>
             <strong>3M Issues &amp; Projects Tracker</strong>
             <span class='sep'>•</span> v{APP_VERSION}
-            <span class='sep'>•</span> Developed by Michael Sauer
+            <span class='sep'>•</span> Developed by
+            <a href="{REPO_URL}" target="_blank" rel="noopener">Michael Sauer</a>
             <span class='sep'>•</span> &copy; {year}
+            <div class='app-footer-meta'>Python {PY_VERSION}
+                <span class='sep'>•</span> Streamlit {ST_VERSION}</div>
         </div>
         """,
         unsafe_allow_html=True,
