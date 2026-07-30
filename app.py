@@ -1329,6 +1329,8 @@ _CAL_CSS = """
 .cal-daynum { font-size:0.78rem; font-weight:600; margin-bottom:2px; color:rgba(128,128,128,0.95); }
 .cal-ev { font-size:0.7rem; line-height:1.25; padding:1px 5px; margin-bottom:2px; border-radius:3px;
           background:rgba(128,128,128,0.10); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cal-ev-link { display:block; text-decoration:none; color:inherit; cursor:pointer; }
+.cal-ev-link:hover .cal-ev { background:rgba(255,75,75,0.18); }
 .cal-more { font-size:0.66rem; color:rgba(128,128,128,0.8); padding-left:2px; }
 .cal-legend { margin:0.6rem 0 0.2rem; font-size:0.78rem; color:rgba(128,128,128,0.9); }
 .cal-leg { margin-right:1rem; white-space:nowrap; }
@@ -1338,9 +1340,12 @@ _CAL_CSS = """
 """
 
 
-def _cal_chip(color, text):
-    return (f"<div class='cal-ev' style='border-left:3px solid {color};'>"
-            f"{html.escape(text)}</div>")
+def _cal_chip(color, text, event_id):
+    """A calendar-cell event chip that links to itself via ?event=<id>."""
+    return (f"<a href='?event={event_id}' target='_self' class='cal-ev-link' "
+            f"title='{html.escape(text)}'>"
+            f"<div class='cal-ev' style='border-left:3px solid {color};'>"
+            f"{html.escape(text)}</div></a>")
 
 
 def _calendar_grid(year, month, items_by_day, today):
@@ -1495,7 +1500,13 @@ def event_detail_dialog(event, user):
 
 
 def page_calendar(user, config):
+    # An event can be opened from session state (project → event) or via the
+    # ?event=<id> link on a calendar cell chip. Clear the param so it doesn't reopen.
     pending = st.session_state.pop("open_event_id", None)
+    qp_event = st.query_params.get("event")
+    if qp_event and qp_event.isdigit():
+        pending = int(qp_event)
+        del st.query_params["event"]
     if pending:
         for k in [k for k in st.session_state if k.startswith(f"ee{pending}_")]:
             del st.session_state[k]
@@ -1543,7 +1554,8 @@ def page_calendar(user, config):
         d = max(e["EventDate"], grid_start)
         while d <= min(end, grid_end):
             items_by_day.setdefault(d, []).append(
-                {"sort": (d, e["EventTime"] or midnight), "chip": _cal_chip(color, label)})
+                {"sort": (d, e["EventTime"] or midnight),
+                 "chip": _cal_chip(color, label, e["Id"])})
             d += timedelta(days=1)
 
     st.markdown(_CAL_CSS + _calendar_grid(year, month, items_by_day, today), unsafe_allow_html=True)
