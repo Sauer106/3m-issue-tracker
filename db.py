@@ -466,6 +466,21 @@ def delete_milestone(milestone_id):
     execute("DELETE FROM ProjectMilestones WHERE Id = ?", (milestone_id,))
 
 
+def list_overdue_milestones():
+    """Open, past-due milestones on live projects (not deleted/Completed/Cancelled)."""
+    return query(
+        """SELECT m.Id, m.Name, m.DueDate, m.ProjectId, p.Title AS ProjectTitle,
+                  p.Status AS ProjectStatus, a.DisplayName AS AssignedToName
+           FROM ProjectMilestones m
+           JOIN Projects p ON p.Id = m.ProjectId
+           LEFT JOIN Users a ON a.Id = p.AssignedTo
+           WHERE m.Done = 0 AND m.DueDate IS NOT NULL
+                 AND m.DueDate < CAST(SYSDATETIME() AS DATE)
+                 AND p.DeletedAt IS NULL
+                 AND p.Status NOT IN ('Completed', 'Cancelled')
+           ORDER BY m.DueDate""")
+
+
 def next_milestones_map():
     """The next open (incomplete) milestone per project, for the project cards."""
     rows = query(

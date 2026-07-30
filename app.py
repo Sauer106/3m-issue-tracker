@@ -1159,12 +1159,18 @@ def project_detail(project_id, user):
                 if mc2.button("Reopen" if m["Done"] else "Done", key=f"msdone_{m['Id']}",
                               use_container_width=True):
                     db.update_milestone(m["Id"], done=not m["Done"])
+                    verb = "Reopened" if m["Done"] else "Completed"
+                    emoji = "↩️" if m["Done"] else "✅"
+                    db.add_project_update(project_id, user["Id"],
+                                          f"{emoji} {verb} milestone: {m['Name']}")
                     db.audit(user["Id"], "milestone_toggle",
                              f"project #{project_id} '{m['Name']}' -> "
                              f"{'open' if m['Done'] else 'done'}")
                     st.rerun()
                 if mc3.button("🗑", key=f"msdel_{m['Id']}", use_container_width=True):
                     db.delete_milestone(m["Id"])
+                    db.add_project_update(project_id, user["Id"],
+                                          f"🗑 Removed milestone: {m['Name']}")
                     db.audit(user["Id"], "milestone_delete", f"project #{project_id} '{m['Name']}'")
                     st.rerun()
             else:
@@ -1177,6 +1183,9 @@ def project_detail(project_id, user):
                 if a3.form_submit_button("Add", use_container_width=True):
                     if ms_name.strip():
                         db.add_milestone(project_id, ms_name.strip(), ms_date)
+                        due = f" (due {ms_date:%b %d, %Y})" if ms_date else ""
+                        db.add_project_update(project_id, user["Id"],
+                                              f"🎯 Added milestone: {ms_name.strip()}{due}")
                         db.audit(user["Id"], "milestone_add",
                                  f"project #{project_id} '{ms_name.strip()}'")
                         st.rerun()
@@ -1626,12 +1635,14 @@ def page_dashboard(user, config):
     active_projects = [p for p in projects if p["Status"] in ("Planned", "In Progress", "On Hold")]
 
     overdue = [i for i in open_issues if is_overdue(i)]
-    c1, c2, c3, c4, c5 = st.columns(5)
+    overdue_ms = db.list_overdue_milestones()
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Open issues", len(open_issues))
     c2.metric("Overdue", len(overdue))
     c3.metric("Closed this week", len(closed_week))
     c4.metric("Needs update", len(needs))
     c5.metric("Active projects", len(active_projects))
+    c6.metric("Overdue milestones", len(overdue_ms))
 
     now = datetime.now()
     if open_issues:
@@ -1639,6 +1650,24 @@ def page_dashboard(user, config):
         a1, a2 = st.columns(2)
         a1.metric("Avg age of open issues", f"{round(sum(ages) / len(ages))} days")
         a2.metric("Oldest open issue", f"{max(ages)} days")
+
+    if overdue_ms:
+        st.subheader("⚠️ Overdue milestones")
+        for m in overdue_ms:
+            days = (now.date() - m["DueDate"]).days
+            name_chip = chip(f"🎯 {m['Name']}", "#d32f2f")
+            plural = "s" if days != 1 else ""
+            with st.container(border=True):
+                o1, o2 = st.columns([6, 1], vertical_alignment="center")
+                o1.markdown(
+                    f"{name_chip} <b>{html.escape(m['ProjectTitle'])}</b>"
+                    f"<p class='issue-meta'>Due {m['DueDate']:%b %d, %Y} · {days} day{plural} "
+                    f"overdue · assigned to {html.escape(m['AssignedToName'] or 'no one')}</p>",
+                    unsafe_allow_html=True)
+                if o2.button("Open project", key=f"omst_{m['Id']}", use_container_width=True):
+                    st.session_state.selected_project = m["ProjectId"]
+                    st.session_state.page = "Projects"
+                    st.rerun()
 
     st.subheader("Upcoming — next 30 days")
     up_start = now.date()
