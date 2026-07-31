@@ -93,10 +93,24 @@ BUILD_SHA, BUILD_DATE = _build_info()
 BUILD_STR = (f"{BUILD_SHA} ({BUILD_DATE})" if BUILD_DATE else BUILD_SHA) if BUILD_SHA else None
 
 
-STATUS_COLORS = {"Open": "#1976d2", "In Progress": "#7b1fa2", "Resolved": "#388e3c", "Closed": "#616161",
-                 "Waiting on Solventum": "#2e7d32", "Hold": "#f57c00",
-                 "Planned": "#1976d2", "On Hold": "#f57c00", "Completed": "#388e3c", "Cancelled": "#616161"}
-NEUTRAL = "#607d8b"
+# ---- Design tokens (single palette; mirrored in .streamlit/config.toml [theme]) ----
+PRIMARY = "#1565C0"   # brand blue: primary buttons, active nav, links, info
+DEEP    = "#22313F"   # slate header accent
+INK     = "#1F2933"
+MUTED   = "#6B7280"
+BORDER  = "#E5E7EB"
+SURFACE = "#F4F5F7"
+GOOD    = "#2E7D32"   # success / green status / Solventum
+WARN    = "#E65100"   # warning / hold
+DANGER  = "#C62828"   # danger / major / overdue
+INFO    = PRIMARY
+PURPLE  = "#6A1B9A"   # In Progress
+NEUTRAL = "#546E7A"   # the single neutral gray for chips
+TEAL    = "#00796B"   # milestones only
+
+STATUS_COLORS = {"Open": PRIMARY, "In Progress": PURPLE, "Waiting on Solventum": GOOD,
+                 "Hold": WARN, "Closed": NEUTRAL,
+                 "Planned": PRIMARY, "On Hold": WARN, "Completed": GOOD, "Cancelled": NEUTRAL}
 
 
 def chip(text, color=NEUTRAL):
@@ -106,14 +120,19 @@ def chip(text, color=NEUTRAL):
             f"border:1px solid {color}55'>{html.escape(str(text))}</span>")
 
 
+def section(title, icon=""):
+    """One consistent section header used across detail/list views."""
+    st.markdown(f"<div class='section-h'><span class='section-bar'></span>"
+                f"{(icon + ' ') if icon else ''}{html.escape(title)}</div>",
+                unsafe_allow_html=True)
+
+
 def solventum_chip(text):
-    return (f"<span class='chip' style='background:#023129; color:#05dd4d; "
-            f"border:1px solid #05dd4d'>{html.escape(str(text))}</span>")
+    return chip(str(text), GOOD)        # Solventum ticket = green (uniform chip formula)
 
 
 def servicedesk_chip(text):
-    return (f"<span class='chip' style='background:#cfe8ff; color:#0d47a1; "
-            f"border:1px solid #1565c0'>{html.escape(str(text))}</span>")
+    return chip(str(text), PRIMARY)     # ServiceDesk ticket = blue
 
 
 def is_overdue(issue):
@@ -126,26 +145,26 @@ def due_chip(issue):
     if not d:
         return ""
     if is_overdue(issue):
-        return chip(f"⏰ Overdue {d:%b %d}", "#d32f2f")
-    return chip(f"Due {d:%b %d}", "#607d8b")
+        return chip(f"⏰ Overdue {d:%b %d}", DANGER)
+    return chip(f"Due {d:%b %d}", NEUTRAL)
 
 
-# Calendar event categories and their colors (also used for the project-target marker).
+# Calendar event categories and their colors (aligned to the palette tokens).
 EVENT_CATEGORIES = ["Go-Live", "Deadline", "Projected Go-Live", "Testing Event", "Update"]
-EVENT_COLORS = {"Go-Live": "#388e3c", "Deadline": "#d32f2f", "Projected Go-Live": "#f57c00",
-                "Testing Event": "#1976d2", "Update": "#7b1fa2"}
-PROJECT_TARGET_COLOR = "#00796b"
+EVENT_COLORS = {"Go-Live": GOOD, "Deadline": DANGER, "Projected Go-Live": WARN,
+                "Testing Event": PRIMARY, "Update": PURPLE}
+PROJECT_TARGET_COLOR = PRIMARY   # linked-project chips (teal is reserved for milestones)
 
 
 def milestone_chip(m):
     """Chip for a milestone: green ✓ when done, red when past-due and still open."""
     if m["Done"]:
-        return chip(f"✓ {m['Name']}", "#388e3c")
+        return chip(f"✓ {m['Name']}", GOOD)
     d = m["DueDate"]
     label = f"🎯 {m['Name']}" + (f" · {d:%b %d}" if d else "")
     if d and d < datetime.now().date():
-        return chip(label + " (past)", "#d32f2f")
-    return chip(label, PROJECT_TARGET_COLOR)
+        return chip(label + " (past)", DANGER)
+    return chip(label, TEAL)
 
 
 def next_milestone_chip(m):
@@ -154,7 +173,7 @@ def next_milestone_chip(m):
         return ""
     d = m["DueDate"]
     label = f"🎯 {m['Name']}" + (f" · {d:%b %d}" if d else "")
-    color = "#d32f2f" if (d and d < datetime.now().date()) else PROJECT_TARGET_COLOR
+    color = DANGER if (d and d < datetime.now().date()) else TEAL
     return chip(label, color)
 
 
@@ -311,8 +330,8 @@ def region_chips(regions):
     """Display-only: collapse to a single 'All Regions' chip when every region is
     selected. The stored data always keeps the full region list for reporting."""
     if regions and set(regions) >= set(REGIONS):
-        return chip("All Regions", "#455a64")
-    return "".join(chip(r, "#455a64") for r in regions)
+        return chip("All Regions", NEUTRAL)
+    return "".join(chip(r, NEUTRAL) for r in regions)
 
 
 def scope_chips(record, detailed=False):
@@ -395,9 +414,7 @@ def render_attachments(kind, parent_id, user, log_update, read_only=False):
     """Attachment list + uploader. kind is 'issue' or 'project'; log_update writes
     the upload/removal into that item's history."""
     atts = db.list_attachments(kind, parent_id)
-    with st.container(border=True):
-        st.markdown(f"**📎 Attachments** &nbsp;<span class='issue-meta'>{len(atts)}</span>",
-                    unsafe_allow_html=True)
+    with st.expander(f"📎 Attachments ({len(atts)})", expanded=False):
         for a in atts:
             c1, c2, c3 = st.columns([6, 1, 1], vertical_alignment="center")
             c1.markdown(
@@ -440,7 +457,7 @@ def render_history(updates, on_delete=None, can_delete=None,
     When proposal_allowed, pending fix proposals get Accept/Decline buttons
     that call on_proposal(update, accepted)."""
     count = f"{len(updates)} update{'s' if len(updates) != 1 else ''}"
-    st.markdown(f"**History** &nbsp;<span class='issue-meta'>{count}</span>", unsafe_allow_html=True)
+    section(f"History · {count}")
     if not updates:
         st.caption("No updates yet — add the first one above.")
         return
@@ -448,16 +465,16 @@ def render_history(updates, on_delete=None, can_delete=None,
     def item_html(u):
         dot_color, change_html = NEUTRAL, ""
         badges = ""
-        proposal_color = {"Accepted": "#388e3c", "Declined": "#d32f2f"}.get(
-            u.get("ProposalStatus"), "#f57c00")
+        proposal_color = {"Accepted": GOOD, "Declined": DANGER}.get(
+            u.get("ProposalStatus"), WARN)
         if u.get("IsFixProposal"):
             label = {"Accepted": "💡 Fix accepted", "Declined": "💡 Fix declined"}.get(
                 u.get("ProposalStatus"), "💡 Fix proposal")
             badges += "&nbsp;" + chip(label, proposal_color)
         elif u["Comment"].strip():
-            badges += "&nbsp;" + chip("💬 Comment", "#00796b")
+            badges += "&nbsp;" + chip("💬 Comment", INFO)
         if u.get("FieldChanges"):
-            badges += "&nbsp;" + chip("✏️ Details", "#5d4037")
+            badges += "&nbsp;" + chip("✏️ Details", NEUTRAL)
         if u["StatusChange"]:
             old, _, new = u["StatusChange"].partition(" -> ")
             dot_color = STATUS_COLORS.get(new, NEUTRAL)
@@ -466,7 +483,7 @@ def render_history(updates, on_delete=None, can_delete=None,
         elif u.get("IsFixProposal"):
             dot_color = proposal_color
         elif u["Comment"].strip():
-            dot_color = "#00796b"
+            dot_color = NEUTRAL
 
         edits_html = ""
         if u.get("FieldChanges"):
@@ -477,7 +494,7 @@ def render_history(updates, on_delete=None, can_delete=None,
             rows = ""
             for e in edits:
                 old_v = _edit_value_chips(e["field"], e["old"], NEUTRAL)
-                new_v = _edit_value_chips(e["field"], e["new"], "#1976d2")
+                new_v = _edit_value_chips(e["field"], e["new"], PRIMARY)
                 rows += (f"<div class='tl-change'><span class='tl-field'>{html.escape(e['field'])}</span>"
                          f"{old_v}<span class='issue-meta'>→</span>&nbsp;{new_v}</div>")
             if rows:
@@ -671,8 +688,8 @@ def new_issue_dialog(user):
     impact = current_action = None
     if is_major:
         with st.container(border=True):
-            st.markdown(f"**🚩 Major issue brief** <span class='issue-meta'>— notifies leadership: "
-                        f"{LEADERSHIP_STR}</span>", unsafe_allow_html=True)
+            section("Major issue brief", "🚩")
+            st.caption(f"Notifies leadership: {LEADERSHIP_STR}")
             impact = st.text_area("Impact (required)", key="ni_impact",
                                   placeholder="Who/what is affected, and how badly.")
             current_action = st.text_area("Current action", key="ni_action",
@@ -898,9 +915,9 @@ def page_issues(user, config):
                 if i["ServiceDeskTicket"]:
                     tickets += servicedesk_chip(i["ServiceDeskTicket"])
                 c1.markdown(
-                    f"<div style='font-weight:600; font-size:1.02rem; margin-bottom:0.25rem'>"
+                    f"<div class='card-title'>"
                     f"#{i['Id']} · {html.escape(i['Title'])}</div>"
-                    + (chip("🚩 Major", "#d32f2f") if i["IsMajor"] else "")
+                    + (chip("🚩 Major", DANGER) if i["IsMajor"] else "")
                     + chip(i["Status"], STATUS_COLORS.get(i["Status"], NEUTRAL))
                     + due_chip(i)
                     + tickets
@@ -957,11 +974,11 @@ def issue_detail(issue_id, user):
     if issue.get("RegionsChecked"):
         coverage += chip(f"Regions checked: {issue['RegionsChecked']}", NEUTRAL)
     if issue["Status"] == "Closed" and issue.get("FixAppliedAllRegions"):
-        _rollout = {"Has been": "#388e3c", "Will be": "#1976d2", "No": "#d32f2f"}
+        _rollout = {"Has been": GOOD, "Will be": PRIMARY, "No": DANGER}
         coverage += chip(f"All regions: {issue['FixAppliedAllRegions']}",
                          _rollout.get(issue["FixAppliedAllRegions"], NEUTRAL))
     st.markdown(
-        (chip("🚩 Major", "#d32f2f") if issue["IsMajor"] else "")
+        (chip("🚩 Major", DANGER) if issue["IsMajor"] else "")
         + chip(issue["Status"], STATUS_COLORS.get(issue["Status"], NEUTRAL))
         + due_chip(issue) + tickets + coverage
         + f"<p class='issue-meta'>Reported by {html.escape(issue['ReportedByName'])} on "
@@ -974,8 +991,8 @@ def issue_detail(issue_id, user):
 
     if issue["IsMajor"]:
         with st.container(border=True):
-            st.markdown(f"**🚩 Major issue brief** <span class='issue-meta'>— notifies leadership: "
-                        f"{LEADERSHIP_STR}</span>", unsafe_allow_html=True)
+            section("Major issue brief", "🚩")
+            st.caption(f"Notifies leadership: {LEADERSHIP_STR}")
             st.markdown("**Affected regions:** "
                         + (scope_chips(issue, detailed=True)
                            or "<span class='issue-meta'>none selected</span>"),
@@ -1017,7 +1034,7 @@ def issue_detail(issue_id, user):
 
     if not editable:
         with st.container(border=True):
-            st.markdown("**Regions & Facilities**")
+            section("Regions & Facilities")
             st.markdown(scope_chips(issue, detailed=True)
                         or "<span class='issue-meta'>none</span>", unsafe_allow_html=True)
 
@@ -1029,7 +1046,7 @@ def issue_detail(issue_id, user):
                 st.rerun()   # lock freed - re-render with edit rights
             others = db.list_presence(page_key, user["Id"])
             if others:
-                st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", "#0288d1")
+                st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", INFO)
                                     for o in others), unsafe_allow_html=True)
             render_history(db.list_updates(issue_id))
 
@@ -1045,7 +1062,7 @@ def issue_detail(issue_id, user):
     old_assignee_ids = [assignee_map[n] for n in current_assignees]
 
     with st.container(border=True):
-        st.markdown("**Regions & Facilities**")
+        section("Regions & Facilities")
         new_regions, new_facilities = region_facility_picker(
             f"iss{issue_id}",
             json.loads(issue["Regions"] or "[]"),
@@ -1053,7 +1070,7 @@ def issue_detail(issue_id, user):
         )
 
     with st.form(f"update_{issue_id}"):
-        st.markdown("**Add an update**")
+        section("Add an update")
         comment = st.text_area("Update", height=100, label_visibility="collapsed",
                                placeholder="What's the latest on this issue?")
         col1, col2 = st.columns(2)
@@ -1132,7 +1149,7 @@ def issue_detail(issue_id, user):
             st.rerun()   # lost the lock - drop to read-only view
         others = db.list_presence(f"issue:{issue_id}", user["Id"])
         if others:
-            st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", "#0288d1")
+            st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", INFO)
                                 for o in others), unsafe_allow_html=True)
         def _del_update(uid):
             db.delete_update(uid)
@@ -1160,7 +1177,7 @@ def page_projects(user, config):
         new_project_dialog(user)
 
     with st.container(border=True):
-        col1, col2, col3 = st.columns([2, 2, 1], vertical_alignment="bottom")
+        col1, col2, col3 = st.columns([3, 3, 1.6], vertical_alignment="center")
         status_filter = col1.multiselect("Status", PROJECT_STATUSES,
                                          default=["Planned", "In Progress", "On Hold"])
         search = col2.text_input("Search title/summary")
@@ -1190,7 +1207,7 @@ def page_projects(user, config):
                 if p["ServiceDeskTicket"]:
                     tickets += servicedesk_chip(p["ServiceDeskTicket"])
                 c1.markdown(
-                    f"<div style='font-weight:600; font-size:1.02rem; margin-bottom:0.25rem'>"
+                    f"<div class='card-title'>"
                     f"#{p['Id']} · {html.escape(p['Title'])}</div>"
                     + chip(p["Status"], STATUS_COLORS.get(p["Status"], NEUTRAL))
                     + tickets
@@ -1255,7 +1272,7 @@ def project_detail(project_id, user):
         st.markdown(proj["Summary"])
 
     with st.container(border=True):
-        st.markdown("**🎯 Milestones**")
+        section("Milestones", "🎯")
         milestones = db.list_milestones(project_id)
         if not milestones:
             st.caption("No milestones yet.")
@@ -1299,15 +1316,15 @@ def project_detail(project_id, user):
                     else:
                         st.warning("Enter a milestone name.")
 
-    with st.container(border=True):
-        st.markdown("**👥 Internal Teams**")
+    with st.expander("👥 Internal Teams", expanded=False):
         teams = db.list_project_teams(project_id)
         if not teams:
             st.caption("No internal teams recorded yet.")
         for t in teams:
             analysts = t["Analysts"] or ""
             if editable:
-                with st.expander(t["Team"] + (f" — {analysts}" if analysts else "")):
+                with st.popover(t["Team"] + (f" — {analysts}" if analysts else ""),
+                                use_container_width=True):
                     new_analysts = st.text_area("Analyst(s)", value=analysts, key=f"pt_a_{t['Id']}",
                                                 height=70, placeholder="Analyst(s) on this team")
                     e1, e2 = st.columns(2)
@@ -1339,14 +1356,14 @@ def project_detail(project_id, user):
             if not TEAMS:
                 st.caption("Add teams on the Admin page first.")
 
-    with st.container(border=True):
-        st.markdown("**🏢 Vendors**")
+    with st.expander("🏢 Vendors", expanded=False):
         vendors = db.list_project_vendors(project_id)
         if not vendors:
             st.caption("No vendors recorded yet.")
         for v in vendors:
             if editable:
-                with st.expander(v["Vendor"] + (f" · {v['Status']}" if v["Status"] else "")):
+                with st.popover(v["Vendor"] + (f" · {v['Status']}" if v["Status"] else ""),
+                                use_container_width=True):
                     v_role = st.text_input("Role / involvement", value=v["Role"] or "",
                                            key=f"pv_r_{v['Id']}")
                     v_contact = st.text_input("Contact", value=v["Contact"] or "", key=f"pv_c_{v['Id']}")
@@ -1395,10 +1412,8 @@ def project_detail(project_id, user):
             if not VENDORS:
                 st.caption("Add vendors on the Admin page first.")
 
-    with st.container(border=True):
-        cc1, cc2 = st.columns([6, 1], vertical_alignment="center")
-        cc1.markdown("**📅 Calendar**")
-        if editable and cc2.button("➕ Add", key=f"addcal_{project_id}", use_container_width=True):
+    with st.expander("📅 Calendar", expanded=False):
+        if editable and st.button("➕ Add event", key=f"addcal_{project_id}"):
             for k in [k for k in st.session_state if k.startswith("ne_")]:
                 del st.session_state[k]
             st.session_state.ne_seed_project = project_id
@@ -1428,7 +1443,7 @@ def project_detail(project_id, user):
 
     if not editable:
         with st.container(border=True):
-            st.markdown("**Regions & Facilities**")
+            section("Regions & Facilities")
             st.markdown(scope_chips(proj, detailed=True)
                         or "<span class='issue-meta'>none</span>", unsafe_allow_html=True)
 
@@ -1440,7 +1455,7 @@ def project_detail(project_id, user):
                 st.rerun()   # lock freed - re-render with edit rights
             others = db.list_presence(page_key, user["Id"])
             if others:
-                st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", "#0288d1")
+                st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", INFO)
                                     for o in others), unsafe_allow_html=True)
             render_history(db.list_project_updates(project_id))
 
@@ -1456,7 +1471,7 @@ def project_detail(project_id, user):
     old_assignee_ids = [assignee_map[n] for n in current_assignees]
 
     with st.container(border=True):
-        st.markdown("**Regions & Facilities**")
+        section("Regions & Facilities")
         new_regions, new_facilities = region_facility_picker(
             f"prj{project_id}",
             json.loads(proj["Regions"] or "[]"),
@@ -1464,7 +1479,7 @@ def project_detail(project_id, user):
         )
 
     with st.form(f"proj_update_{project_id}"):
-        st.markdown("**Add an update**")
+        section("Add an update")
         comment = st.text_area("Update", height=100, label_visibility="collapsed",
                                placeholder="What's the latest on this project?")
         col1, col2 = st.columns(2)
@@ -1511,7 +1526,7 @@ def project_detail(project_id, user):
             st.rerun()   # lost the lock - drop to read-only view
         others = db.list_presence(f"project:{project_id}", user["Id"])
         if others:
-            st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", "#0288d1")
+            st.markdown("".join(chip(f"👀 {o['DisplayName']} is viewing", INFO)
                                 for o in others), unsafe_allow_html=True)
         def _del_pupdate(uid):
             db.delete_project_update(uid)
@@ -1530,7 +1545,7 @@ _CAL_CSS = """
           color:rgba(128,128,128,0.9); font-weight:600; }
 .cal-daynum { font-size:0.8rem; font-weight:600; color:rgba(128,128,128,0.95); margin-bottom:1px; }
 .cal-daynum.cal-dim { opacity:0.4; }
-.cal-daynum.cal-today { color:#ff4b4b; }
+.cal-daynum.cal-today { color:#1565C0; }
 .cal-more { font-size:0.66rem; color:rgba(128,128,128,0.8); padding-left:2px; }
 .cal-legend { margin:0.6rem 0 0.2rem; font-size:0.78rem; color:rgba(128,128,128,0.9); }
 .cal-leg { margin-right:1rem; white-space:nowrap; }
@@ -1538,20 +1553,23 @@ _CAL_CSS = """
            vertical-align:middle; }
 /* Day cells: tighten the bordered container into a calendar box */
 [class*="st-key-calcell_"] { min-height:6.2rem; padding:3px 5px !important; }
-[class*="st-key-calcell_today_"] { outline:2px solid #ff4b4b; outline-offset:-2px; }
-/* Event buttons: compact, left-aligned, colored left border per category */
+[class*="st-key-calcell_today_"] { outline:2px solid #1565C0; outline-offset:-2px; }
+/* Event buttons: compact, left-aligned; the per-category left border is generated
+   from EVENT_COLORS by _cal_cat_css() so the palette lives in one place. */
 [class*="st-key-calbtn"] button {
     min-height:0; height:auto; padding:1px 6px; margin-bottom:2px; width:100%;
     font-size:0.7rem; font-weight:500; text-align:left; justify-content:flex-start;
     line-height:1.25; border:1px solid rgba(128,128,128,0.2); border-radius:3px; }
 [class*="st-key-calbtn"] button p { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0; }
-[class*="st-key-calbtngl_"] button { border-left:3px solid #388e3c; }
-[class*="st-key-calbtndl_"] button { border-left:3px solid #d32f2f; }
-[class*="st-key-calbtnpgl_"] button { border-left:3px solid #f57c00; }
-[class*="st-key-calbtnte_"] button { border-left:3px solid #1976d2; }
-[class*="st-key-calbtnup_"] button { border-left:3px solid #7b1fa2; }
 </style>
 """
+
+
+def _cal_cat_css():
+    """Per-category event-button left borders, generated from the palette."""
+    rules = "".join(f'[class*="st-key-calbtn{code}_"] button {{ border-left:3px solid '
+                    f'{EVENT_COLORS[cat]}; }}' for cat, code in CAT_CODE.items())
+    return f"<style>{rules}</style>"
 
 # Short, class-safe codes for the per-category button border colors above.
 CAT_CODE = {"Go-Live": "gl", "Deadline": "dl", "Projected Go-Live": "pgl", "Testing Event": "te",
@@ -1579,7 +1597,7 @@ def _time_range(t_start, t_end):
 
 def _render_month_grid(weeks, month, events_by_day, today, user):
     """Native, in-place calendar grid: each event is a button that opens its dialog."""
-    st.markdown(_CAL_CSS, unsafe_allow_html=True)
+    st.markdown(_CAL_CSS + _cal_cat_css(), unsafe_allow_html=True)
     hdr = st.columns(7, gap="small")
     for i, name in enumerate(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]):
         hdr[i].markdown(f"<div class='cal-th'>{name}</div>", unsafe_allow_html=True)
@@ -1726,7 +1744,7 @@ def new_event_dialog(user):
 
 def _event_resource_chips(event_id):
     """Chips naming the resource user(s) assigned to an event."""
-    return "".join(chip(f"👤 {r['DisplayName']}", "#455a64")
+    return "".join(chip(f"👤 {r['DisplayName']}", NEUTRAL)
                    for r in db.list_event_resources(event_id))
 
 
@@ -1884,7 +1902,7 @@ def _bar(counts, x_label):
         return
     items = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
     df = pd.DataFrame({x_label: [k for k, _ in items], "Count": [v for _, v in items]})
-    st.bar_chart(df, x=x_label, y="Count", color="#1976d2", height=260)
+    st.bar_chart(df, x=x_label, y="Count", color=PRIMARY, height=260)
 
 
 def _csv_dt(dt):
@@ -1957,7 +1975,7 @@ def page_dashboard(user, config):
         st.subheader("⚠️ Overdue milestones")
         for m in overdue_ms:
             days = (now.date() - m["DueDate"]).days
-            name_chip = chip(f"🎯 {m['Name']}", "#d32f2f")
+            name_chip = chip(f"🎯 {m['Name']}", DANGER)
             plural = "s" if days != 1 else ""
             with st.container(border=True):
                 o1, o2 = st.columns([6, 1], vertical_alignment="center")
@@ -2144,8 +2162,8 @@ def page_admin(user, config):
     for u in db.list_users():
         with st.container(border=True):
             col1, col2, col3, col4 = st.columns([3, 3, 2, 2])
-            role_chip = chip("Admin", "#7b1fa2") if u["IsAdmin"] else chip("User")
-            state_chip = chip("Active", "#388e3c") if u["IsActive"] else chip("Inactive", "#d32f2f")
+            role_chip = chip("Admin", PURPLE) if u["IsAdmin"] else chip("User")
+            state_chip = chip("Active", GOOD) if u["IsActive"] else chip("Inactive", DANGER)
             col1.markdown(f"**{u['DisplayName']}** (`{u['Username']}`)")
             col2.markdown(f"{html.escape(u['Email'])}<br>{role_chip}{state_chip}",
                           unsafe_allow_html=True)
@@ -2388,7 +2406,7 @@ def page_admin(user, config):
         for it in items:
             c1, c2, c3 = st.columns([5, 1, 1], vertical_alignment="center")
             c1.markdown(
-                f"{chip(kind.title(), '#546e7a')} #{it['Id']} · {html.escape(it['Title'])}"
+                f"{chip(kind.title(), NEUTRAL)} #{it['Id']} · {html.escape(it['Title'])}"
                 f"<br><span class='issue-meta'>deleted by "
                 f"{html.escape(it['DeletedByName'] or 'unknown')} · {fmt_dt(it['DeletedAt'])}</span>",
                 unsafe_allow_html=True)
@@ -2413,7 +2431,7 @@ def page_admin(user, config):
             who = html.escape(e["ActorName"] or "unknown")
             detail = f" — {html.escape(e['Detail'])}" if e["Detail"] else ""
             st.markdown(
-                f"<div style='padding:2px 0'>{chip(e['Action'], '#5d4037')} "
+                f"<div style='padding:2px 0'>{chip(e['Action'], NEUTRAL)} "
                 f"<b>{who}</b><span class='issue-meta'>{detail} · {fmt_dt(e['CreatedAt'])}</span></div>",
                 unsafe_allow_html=True,
             )
@@ -2458,7 +2476,7 @@ def main():
             font-weight: 500;
         }
         section[data-testid="stSidebar"] [class*="st-key-nav_"] button:hover {
-            border-color: #ff4b4b;
+            border-color: #1565C0;
         }
         /* Card containers: softer corners to match the nav */
         div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -2479,6 +2497,33 @@ def main():
             font-size: 0.82rem;
             margin: 0.15rem 0 0 0;
         }
+        /* One consistent section header (used via section()) */
+        .section-h {
+            display: flex; align-items: center; gap: 0.5rem;
+            font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.06em; color: rgba(128, 128, 128, 0.95);
+            margin: 0.2rem 0 0.5rem 0;
+        }
+        .section-h .section-bar {
+            width: 3px; height: 0.95rem; border-radius: 2px;
+            background: #1565C0; display: inline-block; flex: none;
+        }
+        .card-title { font-weight: 600; font-size: 1.02rem; margin-bottom: 0.3rem; }
+        /* Brand accent applied via CSS (not the theme config) so light AND dark mode
+           both keep working, following the viewer's system preference. */
+        .stButton > button[kind="primary"], .stButton > button[kind="primaryFormSubmit"],
+        .stDownloadButton > button[kind="primary"],
+        button[data-testid="baseButton-primary"],
+        button[data-testid="baseButton-primaryFormSubmit"] {
+            background-color: #1565C0 !important; border-color: #1565C0 !important; color: #fff !important;
+        }
+        .stButton > button[kind="primary"]:hover, .stButton > button[kind="primaryFormSubmit"]:hover,
+        .stDownloadButton > button[kind="primary"]:hover,
+        button[data-testid="baseButton-primary"]:hover,
+        button[data-testid="baseButton-primaryFormSubmit"]:hover {
+            background-color: #0F4C8C !important; border-color: #0F4C8C !important;
+        }
+        a, a:visited { color: #1565C0; }
         /* Region/facility picker popovers: cap height so the panel scrolls
            instead of growing taller than the space below and flipping upward */
         div[data-testid="stPopoverBody"] {
@@ -2792,7 +2837,7 @@ def render_footer():
         .app-footer strong { color: rgba(128, 128, 128, 0.95); font-weight: 600; }
         .app-footer .sep { margin: 0 0.5rem; opacity: 0.5; }
         .app-footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-        .app-footer a:hover { color: #ff4b4b; }
+        .app-footer a:hover { color: #1565C0; }
         .app-footer-meta { margin-top: 0.25rem; font-size: 0.72rem; opacity: 0.8; }
         /* Make the footer action buttons read like quiet text links */
         [class*="st-key-footer_"] button {
@@ -2804,7 +2849,7 @@ def render_footer():
             padding: 0.2rem 0.4rem;
             min-height: 0;
         }
-        [class*="st-key-footer_"] button:hover { color: #ff4b4b; background: transparent; }
+        [class*="st-key-footer_"] button:hover { color: #1565C0; background: transparent; }
         [class*="st-key-footer_"] button:focus { box-shadow: none; }
         </style>
         <hr class='footer-rule'>

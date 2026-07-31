@@ -102,8 +102,9 @@ if (-not $SkipTasks) {
     $appSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
         -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 2) `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    # Run from the app folder (tidy CWD for relative paths / any future config).
     Register-ScheduledTask -TaskName "IssueTracker App" -Force `
-        -Action    (New-ScheduledTaskAction -Execute $streamlit -Argument $appArgs) `
+        -Action    (New-ScheduledTaskAction -Execute $streamlit -Argument $appArgs -WorkingDirectory $AppDir) `
         -Trigger   (New-ScheduledTaskTrigger -AtStartup) `
         -Principal (New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount) `
         -Settings  $appSettings | Out-Null
