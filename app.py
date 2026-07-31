@@ -1361,71 +1361,85 @@ def project_detail(project_id, user):
         if not vendors:
             st.caption("No vendors recorded yet.")
         for v in vendors:
+            contacts = db.list_vendor_contacts(v["Id"])
+            label = v["Vendor"] + (f" · {v['Status']}" if v["Status"] else "")
+            if contacts:
+                label += f" · {len(contacts)} contact{'s' if len(contacts) != 1 else ''}"
             if editable:
-                with st.popover(v["Vendor"] + (f" · {v['Status']}" if v["Status"] else ""),
-                                use_container_width=True):
-                    v_role = st.text_input("Role / involvement", value=v["Role"] or "",
-                                           key=f"pv_r_{v['Id']}")
-                    v_contact = st.text_input("Contact name", value=v["Contact"] or "",
-                                              key=f"pv_c_{v['Id']}")
-                    vc1, vc2 = st.columns(2)
-                    v_email = vc1.text_input("Email", value=v.get("ContactEmail") or "",
-                                             key=f"pv_e_{v['Id']}")
-                    v_phone = vc2.text_input("Phone", value=v.get("ContactPhone") or "",
-                                             key=f"pv_p_{v['Id']}")
+                with st.popover(label, use_container_width=True):
+                    vr1, vr2 = st.columns([3, 2])
+                    v_role = vr1.text_input("Role / involvement", value=v["Role"] or "",
+                                            key=f"pv_r_{v['Id']}")
                     opts = ["—"] + VENDOR_STATUSES + (
                         [v["Status"]] if v["Status"] and v["Status"] not in VENDOR_STATUSES else [])
-                    v_status = st.selectbox("Status", opts,
-                                            index=opts.index(v["Status"]) if v["Status"] in opts else 0,
-                                            key=f"pv_s_{v['Id']}")
+                    v_status = vr2.selectbox("Status", opts,
+                                             index=opts.index(v["Status"]) if v["Status"] in opts else 0,
+                                             key=f"pv_s_{v['Id']}")
                     e1, e2 = st.columns(2)
                     if e1.button("Save", key=f"pv_save_{v['Id']}", use_container_width=True):
                         db.update_project_vendor(v["Id"], v_role.strip() or None,
-                                                 v_contact.strip() or None,
-                                                 None if v_status == "—" else v_status,
-                                                 email=v_email.strip() or None,
-                                                 phone=v_phone.strip() or None)
+                                                 None if v_status == "—" else v_status)
                         db.add_project_update(project_id, user["Id"], f"🏢 Updated vendor: {v['Vendor']}")
                         db.audit(user["Id"], "project_vendor_update", f"project #{project_id} {v['Vendor']}")
                         st.rerun()
-                    if e2.button("🗑 Delete", key=f"pv_del_{v['Id']}", use_container_width=True):
+                    if e2.button("🗑 Delete vendor", key=f"pv_del_{v['Id']}", use_container_width=True):
                         db.delete_project_vendor(v["Id"])
                         db.add_project_update(project_id, user["Id"], f"🗑 Removed vendor: {v['Vendor']}")
                         db.audit(user["Id"], "project_vendor_delete", f"project #{project_id} {v['Vendor']}")
                         st.rerun()
+                    st.markdown("**Contacts**")
+                    if not contacts:
+                        st.caption("No contacts yet.")
+                    for ct in contacts:
+                        bits = " · ".join(html.escape(b) for b in (ct["Name"], ct["Email"], ct["Phone"]) if b)
+                        cc1, cc2 = st.columns([6, 1], vertical_alignment="center")
+                        cc1.markdown(f"<span class='issue-meta'>{bits or '(blank)'}</span>",
+                                     unsafe_allow_html=True)
+                        if cc2.button("🗑", key=f"vc_del_{ct['Id']}", use_container_width=True,
+                                      help="Remove contact"):
+                            db.delete_vendor_contact(ct["Id"])
+                            st.rerun()
+                    with st.form(f"add_ct_{v['Id']}", clear_on_submit=True):
+                        f1, f2, f3, f4 = st.columns([3, 3, 2, 1], vertical_alignment="bottom")
+                        ct_name = f1.text_input("Name", label_visibility="collapsed", placeholder="Name")
+                        ct_email = f2.text_input("Email", label_visibility="collapsed", placeholder="Email")
+                        ct_phone = f3.text_input("Phone", label_visibility="collapsed", placeholder="Phone")
+                        if f4.form_submit_button("Add") and (ct_name.strip() or ct_email.strip()
+                                                             or ct_phone.strip()):
+                            db.add_vendor_contact(v["Id"], ct_name.strip() or None,
+                                                  ct_email.strip() or None, ct_phone.strip() or None)
+                            st.rerun()
             else:
                 line = f"**{html.escape(v['Vendor'])}**"
                 if v["Status"]:
                     line += f" · {html.escape(v['Status'])}"
                 if v["Role"]:
                     line += f" — {html.escape(v['Role'])}"
-                contact_bits = [b for b in (v["Contact"], v.get("ContactEmail"),
-                                            v.get("ContactPhone")) if b]
-                if contact_bits:
-                    line += ("<br><span class='issue-meta'>"
-                             + " · ".join(html.escape(b) for b in contact_bits) + "</span>")
+                for ct in contacts:
+                    bits = " · ".join(html.escape(b) for b in (ct["Name"], ct["Email"], ct["Phone"]) if b)
+                    if bits:
+                        line += f"<br><span class='issue-meta'>{bits}</span>"
                 st.markdown(line, unsafe_allow_html=True)
         if editable:
+            available = [x for x in VENDORS if x not in {v["Vendor"] for v in vendors}]
             with st.form(f"add_pv_{project_id}", clear_on_submit=True):
-                pv_vendor = st.selectbox("Vendor", VENDORS) if VENDORS else None
-                pv_role = st.text_input("Role / involvement")
-                b1, b2, b3 = st.columns(3)
-                pv_contact = b1.text_input("Contact name")
-                pv_email = b2.text_input("Email")
-                pv_phone = b3.text_input("Phone")
-                pv_status = st.selectbox("Status", ["—"] + VENDOR_STATUSES)
-                if st.form_submit_button("Add vendor", use_container_width=True, disabled=not VENDORS):
+                a1, a2, a3, a4 = st.columns([3, 3, 2, 1], vertical_alignment="bottom")
+                pv_vendor = (a1.selectbox("Vendor", available, label_visibility="collapsed")
+                             if available else None)
+                pv_role = a2.text_input("Role / involvement", label_visibility="collapsed",
+                                        placeholder="Role / involvement")
+                pv_status = a3.selectbox("Status", ["—"] + VENDOR_STATUSES, label_visibility="collapsed")
+                if a4.form_submit_button("Add", disabled=not available):
                     if pv_vendor:
                         db.add_project_vendor(project_id, pv_vendor, pv_role.strip() or None,
-                                              pv_contact.strip() or None,
-                                              None if pv_status == "—" else pv_status,
-                                              email=pv_email.strip() or None,
-                                              phone=pv_phone.strip() or None)
+                                              None if pv_status == "—" else pv_status)
                         db.add_project_update(project_id, user["Id"], f"🏢 Added vendor: {pv_vendor}")
                         db.audit(user["Id"], "project_vendor_add", f"project #{project_id} {pv_vendor}")
                         st.rerun()
             if not VENDORS:
                 st.caption("Add vendors on the Admin page first.")
+            elif not available:
+                st.caption("All available vendors are already on this project — add contacts inside each.")
 
     with st.expander("📅 Calendar", expanded=False):
         if editable and st.button("➕ Add event", key=f"addcal_{project_id}"):

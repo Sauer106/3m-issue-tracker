@@ -480,6 +480,57 @@ IF COL_LENGTH('dbo.ProjectVendors', 'ContactPhone') IS NULL
     ALTER TABLE dbo.ProjectVendors ADD ContactPhone NVARCHAR(50) NULL;
 GO
 
+-- Multiple contacts per project vendor (one vendor entry, many people).
+IF OBJECT_ID('dbo.ProjectVendorContacts') IS NULL
+BEGIN
+    CREATE TABLE dbo.ProjectVendorContacts (
+        Id          INT IDENTITY(1,1) PRIMARY KEY,
+        VendorRowId INT NOT NULL REFERENCES dbo.ProjectVendors(Id) ON DELETE CASCADE,
+        Name        NVARCHAR(200) NULL,
+        Email       NVARCHAR(200) NULL,
+        Phone       NVARCHAR(50)  NULL,
+        CreatedAt   DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+    );
+    CREATE INDEX IX_ProjectVendorContacts_Vendor ON dbo.ProjectVendorContacts(VendorRowId);
+END
+GO
+
+-- One-time migration: fold the single Contact/Email/Phone columns into the contacts
+-- table, then clear them (columns kept dormant so this stays idempotent).
+IF COL_LENGTH('dbo.ProjectVendors', 'Contact') IS NOT NULL
+BEGIN
+    INSERT INTO dbo.ProjectVendorContacts (VendorRowId, Name, Email, Phone)
+    SELECT pv.Id, pv.Contact, pv.ContactEmail, pv.ContactPhone
+    FROM dbo.ProjectVendors pv
+    WHERE (pv.Contact IS NOT NULL OR pv.ContactEmail IS NOT NULL OR pv.ContactPhone IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM dbo.ProjectVendorContacts c WHERE c.VendorRowId = pv.Id);
+    UPDATE dbo.ProjectVendors SET Contact = NULL, ContactEmail = NULL, ContactPhone = NULL
+    WHERE Contact IS NOT NULL OR ContactEmail IS NOT NULL OR ContactPhone IS NOT NULL;
+END
+GO
+
+-- Consolidate duplicate (ProjectId, Vendor) rows into a single entry, moving contacts.
+IF EXISTS (SELECT 1 FROM dbo.ProjectVendors GROUP BY ProjectId, Vendor HAVING COUNT(*) > 1)
+BEGIN
+    ;WITH canon AS (SELECT Id, MIN(Id) OVER (PARTITION BY ProjectId, Vendor) AS CanonId
+                    FROM dbo.ProjectVendors)
+    UPDATE c SET VendorRowId = canon.CanonId
+    FROM dbo.ProjectVendorContacts c JOIN canon ON canon.Id = c.VendorRowId
+    WHERE canon.Id <> canon.CanonId;
+
+    ;WITH g AS (SELECT ProjectId, Vendor, MIN(Id) AS CanonId,
+                       MAX(Role) AS AnyRole, MAX(Status) AS AnyStatus
+                FROM dbo.ProjectVendors GROUP BY ProjectId, Vendor)
+    UPDATE pv SET Role = COALESCE(pv.Role, g.AnyRole), Status = COALESCE(pv.Status, g.AnyStatus)
+    FROM dbo.ProjectVendors pv JOIN g ON g.CanonId = pv.Id;
+
+    ;WITH canon AS (SELECT Id, MIN(Id) OVER (PARTITION BY ProjectId, Vendor) AS CanonId
+                    FROM dbo.ProjectVendors)
+    DELETE pv FROM dbo.ProjectVendors pv JOIN canon ON canon.Id = pv.Id
+    WHERE canon.Id <> canon.CanonId;
+END
+GO
+
 -- Calendar event resources: one or more assigned users per event (required in the app).
 IF OBJECT_ID('dbo.CalendarEventResources') IS NULL
 BEGIN
@@ -615,7 +666,15 @@ GO
 
 CREATE OR ALTER VIEW dbo.vw_ProjectVendors AS
 SELECT pv.ProjectId, p.Title AS Project, p.Status, pv.Vendor, pv.Role,
-       pv.Contact, pv.ContactEmail, pv.ContactPhone, pv.Status AS VendorStatus
+       pv.Status AS VendorStatus
 FROM ProjectVendors pv JOIN Projects p ON p.Id = pv.ProjectId
+WHERE p.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_ProjectVendorContacts AS
+SELECT pv.ProjectId, p.Title AS Project, pv.Vendor, c.Name, c.Email, c.Phone
+FROM ProjectVendorContacts c
+JOIN ProjectVendors pv ON pv.Id = c.VendorRowId
+JOIN Projects p ON p.Id = pv.ProjectId
 WHERE p.DeletedAt IS NULL;
 GO

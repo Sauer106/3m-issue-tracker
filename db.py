@@ -647,24 +647,36 @@ def list_project_vendors(project_id):
     return query("SELECT * FROM ProjectVendors WHERE ProjectId = ? ORDER BY Vendor, Id", (project_id,))
 
 
-def add_project_vendor(project_id, vendor, role=None, contact=None, status=None,
-                       email=None, phone=None):
+def add_project_vendor(project_id, vendor, role=None, status=None):
     return insert_returning_id(
-        """INSERT INTO ProjectVendors (ProjectId, Vendor, Role, Contact, ContactEmail,
-                                       ContactPhone, Status)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (project_id, vendor, role, contact, email, phone, status))
+        """INSERT INTO ProjectVendors (ProjectId, Vendor, Role, Status)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?)""",
+        (project_id, vendor, role, status))
 
 
-def update_project_vendor(vendor_row_id, role=None, contact=None, status=None,
-                          email=None, phone=None):
-    execute("""UPDATE ProjectVendors SET Role = ?, Contact = ?, ContactEmail = ?,
-                      ContactPhone = ?, Status = ? WHERE Id = ?""",
-            (role, contact, email, phone, status, vendor_row_id))
+def update_project_vendor(vendor_row_id, role=None, status=None):
+    execute("UPDATE ProjectVendors SET Role = ?, Status = ? WHERE Id = ?",
+            (role, status, vendor_row_id))
 
 
 def delete_project_vendor(vendor_row_id):
-    execute("DELETE FROM ProjectVendors WHERE Id = ?", (vendor_row_id,))
+    execute("DELETE FROM ProjectVendors WHERE Id = ?", (vendor_row_id,))   # contacts cascade
+
+
+def list_vendor_contacts(vendor_row_id):
+    return query("SELECT * FROM ProjectVendorContacts WHERE VendorRowId = ? ORDER BY Id",
+                 (vendor_row_id,))
+
+
+def add_vendor_contact(vendor_row_id, name=None, email=None, phone=None):
+    return insert_returning_id(
+        """INSERT INTO ProjectVendorContacts (VendorRowId, Name, Email, Phone)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?)""",
+        (vendor_row_id, name, email, phone))
+
+
+def delete_vendor_contact(contact_id):
+    execute("DELETE FROM ProjectVendorContacts WHERE Id = ?", (contact_id,))
 
 
 def list_project_updates(project_id):
