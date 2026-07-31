@@ -457,6 +457,48 @@ BEGIN
 END
 GO
 
+-- Multiple analysts per project team (one team entry, many people).
+IF OBJECT_ID('dbo.ProjectTeamAnalysts') IS NULL
+BEGIN
+    CREATE TABLE dbo.ProjectTeamAnalysts (
+        Id        INT IDENTITY(1,1) PRIMARY KEY,
+        TeamRowId INT NOT NULL REFERENCES dbo.ProjectTeams(Id) ON DELETE CASCADE,
+        Name      NVARCHAR(200) NULL,
+        Email     NVARCHAR(200) NULL,
+        Phone     NVARCHAR(50)  NULL,
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+    );
+    CREATE INDEX IX_ProjectTeamAnalysts_Team ON dbo.ProjectTeamAnalysts(TeamRowId);
+END
+GO
+
+-- One-time migration: fold the free-text Analysts column into analyst rows, then clear it.
+IF COL_LENGTH('dbo.ProjectTeams', 'Analysts') IS NOT NULL
+BEGIN
+    INSERT INTO dbo.ProjectTeamAnalysts (TeamRowId, Name)
+    SELECT pt.Id, pt.Analysts FROM dbo.ProjectTeams pt
+    WHERE pt.Analysts IS NOT NULL AND LTRIM(RTRIM(pt.Analysts)) <> ''
+      AND NOT EXISTS (SELECT 1 FROM dbo.ProjectTeamAnalysts a WHERE a.TeamRowId = pt.Id);
+    UPDATE dbo.ProjectTeams SET Analysts = NULL WHERE Analysts IS NOT NULL;
+END
+GO
+
+-- Consolidate duplicate (ProjectId, Team) rows into one entry, moving analysts.
+IF EXISTS (SELECT 1 FROM dbo.ProjectTeams GROUP BY ProjectId, Team HAVING COUNT(*) > 1)
+BEGIN
+    ;WITH canon AS (SELECT Id, MIN(Id) OVER (PARTITION BY ProjectId, Team) AS CanonId
+                    FROM dbo.ProjectTeams)
+    UPDATE a SET TeamRowId = canon.CanonId
+    FROM dbo.ProjectTeamAnalysts a JOIN canon ON canon.Id = a.TeamRowId
+    WHERE canon.Id <> canon.CanonId;
+
+    ;WITH canon AS (SELECT Id, MIN(Id) OVER (PARTITION BY ProjectId, Team) AS CanonId
+                    FROM dbo.ProjectTeams)
+    DELETE pt FROM dbo.ProjectTeams pt JOIN canon ON canon.Id = pt.Id
+    WHERE canon.Id <> canon.CanonId;
+END
+GO
+
 IF OBJECT_ID('dbo.ProjectVendors') IS NULL
 BEGIN
     CREATE TABLE dbo.ProjectVendors (
@@ -659,8 +701,16 @@ WHERE p.DeletedAt IS NULL;
 GO
 
 CREATE OR ALTER VIEW dbo.vw_ProjectTeams AS
-SELECT pt.ProjectId, p.Title AS Project, p.Status, pt.Team, pt.Analysts
+SELECT pt.ProjectId, p.Title AS Project, p.Status, pt.Team
 FROM ProjectTeams pt JOIN Projects p ON p.Id = pt.ProjectId
+WHERE p.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_ProjectTeamAnalysts AS
+SELECT pt.ProjectId, p.Title AS Project, pt.Team, a.Name, a.Email, a.Phone
+FROM ProjectTeamAnalysts a
+JOIN ProjectTeams pt ON pt.Id = a.TeamRowId
+JOIN Projects p ON p.Id = pt.ProjectId
 WHERE p.DeletedAt IS NULL;
 GO
 

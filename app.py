@@ -1321,40 +1321,61 @@ def project_detail(project_id, user):
         if not teams:
             st.caption("No internal teams recorded yet.")
         for t in teams:
-            analysts = t["Analysts"] or ""
+            people = db.list_team_analysts(t["Id"])
+            label = t["Team"] + (f" · {len(people)} analyst{'s' if len(people) != 1 else ''}"
+                                 if people else "")
             if editable:
-                with st.popover(t["Team"] + (f" — {analysts}" if analysts else ""),
-                                use_container_width=True):
-                    new_analysts = st.text_area("Analyst(s)", value=analysts, key=f"pt_a_{t['Id']}",
-                                                height=70, placeholder="Analyst(s) on this team")
-                    e1, e2 = st.columns(2)
-                    if e1.button("Save", key=f"pt_s_{t['Id']}", use_container_width=True):
-                        db.update_project_team(t["Id"], new_analysts.strip() or None)
-                        db.add_project_update(project_id, user["Id"], f"👥 Updated team: {t['Team']}")
-                        db.audit(user["Id"], "project_team_update", f"project #{project_id} {t['Team']}")
-                        st.rerun()
-                    if e2.button("🗑 Delete", key=f"pt_d_{t['Id']}", use_container_width=True):
+                with st.popover(label, use_container_width=True):
+                    if st.button("🗑 Remove team", key=f"pt_d_{t['Id']}"):
                         db.delete_project_team(t["Id"])
                         db.add_project_update(project_id, user["Id"], f"🗑 Removed team: {t['Team']}")
                         db.audit(user["Id"], "project_team_delete", f"project #{project_id} {t['Team']}")
                         st.rerun()
+                    st.markdown("**Analysts**")
+                    if not people:
+                        st.caption("No analysts yet.")
+                    for a in people:
+                        bits = " · ".join(html.escape(b) for b in (a["Name"], a["Email"], a["Phone"]) if b)
+                        ac1, ac2 = st.columns([6, 1], vertical_alignment="center")
+                        ac1.markdown(f"<span class='issue-meta'>{bits or '(blank)'}</span>",
+                                     unsafe_allow_html=True)
+                        if ac2.button("🗑", key=f"ta_del_{a['Id']}", use_container_width=True,
+                                      help="Remove analyst"):
+                            db.delete_team_analyst(a["Id"])
+                            st.rerun()
+                    with st.form(f"add_ta_{t['Id']}", clear_on_submit=True):
+                        g1, g2, g3, g4 = st.columns([3, 3, 2, 1], vertical_alignment="bottom")
+                        ta_name = g1.text_input("Name", label_visibility="collapsed", placeholder="Name")
+                        ta_email = g2.text_input("Email", label_visibility="collapsed", placeholder="Email")
+                        ta_phone = g3.text_input("Phone", label_visibility="collapsed", placeholder="Phone")
+                        if g4.form_submit_button("Add") and (ta_name.strip() or ta_email.strip()
+                                                             or ta_phone.strip()):
+                            db.add_team_analyst(t["Id"], ta_name.strip() or None,
+                                                ta_email.strip() or None, ta_phone.strip() or None)
+                            st.rerun()
             else:
-                st.markdown(f"**{html.escape(t['Team'])}**"
-                            + (f" — {html.escape(analysts)}" if analysts else ""))
+                line = f"**{html.escape(t['Team'])}**"
+                for a in people:
+                    bits = " · ".join(html.escape(b) for b in (a["Name"], a["Email"], a["Phone"]) if b)
+                    if bits:
+                        line += f"<br><span class='issue-meta'>{bits}</span>"
+                st.markdown(line, unsafe_allow_html=True)
         if editable:
+            available = [x for x in TEAMS if x not in {t["Team"] for t in teams}]
             with st.form(f"add_pt_{project_id}", clear_on_submit=True):
-                a1, a2, a3 = st.columns([2, 3, 1], vertical_alignment="bottom")
-                pt_team = a1.selectbox("Team", TEAMS, label_visibility="collapsed") if TEAMS else None
-                pt_analysts = a2.text_input("Analyst(s)", label_visibility="collapsed",
-                                            placeholder="Analyst(s)")
-                if a3.form_submit_button("Add", use_container_width=True, disabled=not TEAMS):
+                a1, a2 = st.columns([4, 1], vertical_alignment="bottom")
+                pt_team = (a1.selectbox("Team", available, label_visibility="collapsed")
+                           if available else None)
+                if a2.form_submit_button("Add", disabled=not available):
                     if pt_team:
-                        db.add_project_team(project_id, pt_team, pt_analysts.strip() or None)
+                        db.add_project_team(project_id, pt_team)
                         db.add_project_update(project_id, user["Id"], f"👥 Added team: {pt_team}")
                         db.audit(user["Id"], "project_team_add", f"project #{project_id} {pt_team}")
                         st.rerun()
             if not TEAMS:
                 st.caption("Add teams on the Admin page first.")
+            elif not available:
+                st.caption("All teams are already on this project — add analysts inside each.")
 
     with st.expander("🏢 Vendors", expanded=False):
         vendors = db.list_project_vendors(project_id)

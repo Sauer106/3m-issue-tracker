@@ -629,18 +629,30 @@ def list_project_teams(project_id):
     return query("SELECT * FROM ProjectTeams WHERE ProjectId = ? ORDER BY Team, Id", (project_id,))
 
 
-def add_project_team(project_id, team, analysts=None):
+def add_project_team(project_id, team):
     return insert_returning_id(
-        "INSERT INTO ProjectTeams (ProjectId, Team, Analysts) OUTPUT INSERTED.Id VALUES (?, ?, ?)",
-        (project_id, team, analysts))
-
-
-def update_project_team(team_row_id, analysts):
-    execute("UPDATE ProjectTeams SET Analysts = ? WHERE Id = ?", (analysts, team_row_id))
+        "INSERT INTO ProjectTeams (ProjectId, Team) OUTPUT INSERTED.Id VALUES (?, ?)",
+        (project_id, team))
 
 
 def delete_project_team(team_row_id):
-    execute("DELETE FROM ProjectTeams WHERE Id = ?", (team_row_id,))
+    execute("DELETE FROM ProjectTeams WHERE Id = ?", (team_row_id,))   # analysts cascade
+
+
+def list_team_analysts(team_row_id):
+    return query("SELECT * FROM ProjectTeamAnalysts WHERE TeamRowId = ? ORDER BY Id",
+                 (team_row_id,))
+
+
+def add_team_analyst(team_row_id, name=None, email=None, phone=None):
+    return insert_returning_id(
+        """INSERT INTO ProjectTeamAnalysts (TeamRowId, Name, Email, Phone)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?)""",
+        (team_row_id, name, email, phone))
+
+
+def delete_team_analyst(analyst_id):
+    execute("DELETE FROM ProjectTeamAnalysts WHERE Id = ?", (analyst_id,))
 
 
 def list_project_vendors(project_id):
