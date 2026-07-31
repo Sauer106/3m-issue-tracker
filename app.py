@@ -1366,7 +1366,13 @@ def project_detail(project_id, user):
                                 use_container_width=True):
                     v_role = st.text_input("Role / involvement", value=v["Role"] or "",
                                            key=f"pv_r_{v['Id']}")
-                    v_contact = st.text_input("Contact", value=v["Contact"] or "", key=f"pv_c_{v['Id']}")
+                    v_contact = st.text_input("Contact name", value=v["Contact"] or "",
+                                              key=f"pv_c_{v['Id']}")
+                    vc1, vc2 = st.columns(2)
+                    v_email = vc1.text_input("Email", value=v.get("ContactEmail") or "",
+                                             key=f"pv_e_{v['Id']}")
+                    v_phone = vc2.text_input("Phone", value=v.get("ContactPhone") or "",
+                                             key=f"pv_p_{v['Id']}")
                     opts = ["—"] + VENDOR_STATUSES + (
                         [v["Status"]] if v["Status"] and v["Status"] not in VENDOR_STATUSES else [])
                     v_status = st.selectbox("Status", opts,
@@ -1376,7 +1382,9 @@ def project_detail(project_id, user):
                     if e1.button("Save", key=f"pv_save_{v['Id']}", use_container_width=True):
                         db.update_project_vendor(v["Id"], v_role.strip() or None,
                                                  v_contact.strip() or None,
-                                                 None if v_status == "—" else v_status)
+                                                 None if v_status == "—" else v_status,
+                                                 email=v_email.strip() or None,
+                                                 phone=v_phone.strip() or None)
                         db.add_project_update(project_id, user["Id"], f"🏢 Updated vendor: {v['Vendor']}")
                         db.audit(user["Id"], "project_vendor_update", f"project #{project_id} {v['Vendor']}")
                         st.rerun()
@@ -1391,21 +1399,28 @@ def project_detail(project_id, user):
                     line += f" · {html.escape(v['Status'])}"
                 if v["Role"]:
                     line += f" — {html.escape(v['Role'])}"
-                if v["Contact"]:
-                    line += f" · {html.escape(v['Contact'])}"
-                st.markdown(line)
+                contact_bits = [b for b in (v["Contact"], v.get("ContactEmail"),
+                                            v.get("ContactPhone")) if b]
+                if contact_bits:
+                    line += ("<br><span class='issue-meta'>"
+                             + " · ".join(html.escape(b) for b in contact_bits) + "</span>")
+                st.markdown(line, unsafe_allow_html=True)
         if editable:
             with st.form(f"add_pv_{project_id}", clear_on_submit=True):
                 pv_vendor = st.selectbox("Vendor", VENDORS) if VENDORS else None
+                pv_role = st.text_input("Role / involvement")
                 b1, b2, b3 = st.columns(3)
-                pv_role = b1.text_input("Role / involvement")
-                pv_contact = b2.text_input("Contact")
-                pv_status = b3.selectbox("Status", ["—"] + VENDOR_STATUSES)
+                pv_contact = b1.text_input("Contact name")
+                pv_email = b2.text_input("Email")
+                pv_phone = b3.text_input("Phone")
+                pv_status = st.selectbox("Status", ["—"] + VENDOR_STATUSES)
                 if st.form_submit_button("Add vendor", use_container_width=True, disabled=not VENDORS):
                     if pv_vendor:
                         db.add_project_vendor(project_id, pv_vendor, pv_role.strip() or None,
                                               pv_contact.strip() or None,
-                                              None if pv_status == "—" else pv_status)
+                                              None if pv_status == "—" else pv_status,
+                                              email=pv_email.strip() or None,
+                                              phone=pv_phone.strip() or None)
                         db.add_project_update(project_id, user["Id"], f"🏢 Added vendor: {pv_vendor}")
                         db.audit(user["Id"], "project_vendor_add", f"project #{project_id} {pv_vendor}")
                         st.rerun()

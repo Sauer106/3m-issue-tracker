@@ -464,12 +464,20 @@ BEGIN
         ProjectId INT NOT NULL REFERENCES dbo.Projects(Id),
         Vendor    NVARCHAR(100) NOT NULL,      -- snapshot of the vendor name
         Role      NVARCHAR(MAX) NULL,
-        Contact   NVARCHAR(200) NULL,
+        Contact   NVARCHAR(200) NULL,          -- contact person's name
+        ContactEmail NVARCHAR(200) NULL,
+        ContactPhone NVARCHAR(50)  NULL,
         Status    NVARCHAR(50)  NULL,
         CreatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME()
     );
     CREATE INDEX IX_ProjectVendors_Project ON dbo.ProjectVendors(ProjectId);
 END
+GO
+IF COL_LENGTH('dbo.ProjectVendors', 'ContactEmail') IS NULL
+    ALTER TABLE dbo.ProjectVendors ADD ContactEmail NVARCHAR(200) NULL;
+GO
+IF COL_LENGTH('dbo.ProjectVendors', 'ContactPhone') IS NULL
+    ALTER TABLE dbo.ProjectVendors ADD ContactPhone NVARCHAR(50) NULL;
 GO
 
 -- Calendar event resources: one or more assigned users per event (required in the app).
@@ -606,7 +614,8 @@ WHERE p.DeletedAt IS NULL;
 GO
 
 CREATE OR ALTER VIEW dbo.vw_ProjectVendors AS
-SELECT pv.ProjectId, p.Title AS Project, p.Status, pv.Vendor, pv.Role, pv.Contact, pv.Status AS VendorStatus
+SELECT pv.ProjectId, p.Title AS Project, p.Status, pv.Vendor, pv.Role,
+       pv.Contact, pv.ContactEmail, pv.ContactPhone, pv.Status AS VendorStatus
 FROM ProjectVendors pv JOIN Projects p ON p.Id = pv.ProjectId
 WHERE p.DeletedAt IS NULL;
 GO

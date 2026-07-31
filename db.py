@@ -647,16 +647,20 @@ def list_project_vendors(project_id):
     return query("SELECT * FROM ProjectVendors WHERE ProjectId = ? ORDER BY Vendor, Id", (project_id,))
 
 
-def add_project_vendor(project_id, vendor, role=None, contact=None, status=None):
+def add_project_vendor(project_id, vendor, role=None, contact=None, status=None,
+                       email=None, phone=None):
     return insert_returning_id(
-        """INSERT INTO ProjectVendors (ProjectId, Vendor, Role, Contact, Status)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?)""",
-        (project_id, vendor, role, contact, status))
+        """INSERT INTO ProjectVendors (ProjectId, Vendor, Role, Contact, ContactEmail,
+                                       ContactPhone, Status)
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (project_id, vendor, role, contact, email, phone, status))
 
 
-def update_project_vendor(vendor_row_id, role=None, contact=None, status=None):
-    execute("UPDATE ProjectVendors SET Role = ?, Contact = ?, Status = ? WHERE Id = ?",
-            (role, contact, status, vendor_row_id))
+def update_project_vendor(vendor_row_id, role=None, contact=None, status=None,
+                          email=None, phone=None):
+    execute("""UPDATE ProjectVendors SET Role = ?, Contact = ?, ContactEmail = ?,
+                      ContactPhone = ?, Status = ? WHERE Id = ?""",
+            (role, contact, email, phone, status, vendor_row_id))
 
 
 def delete_project_vendor(vendor_row_id):
