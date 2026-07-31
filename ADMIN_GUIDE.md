@@ -147,7 +147,7 @@ Two things admins can always do, regardless of assignment:
 
 ## Reassigning work
 
-When someone changes roles or leaves, their open items shouldn't stay stuck to them. Under **Reassign work**, pick the person to move work **From**, the person to move it **To**, and click Reassign. It shows how many open issues and projects that person holds and moves them all at once. The action is audit-logged. (This is the bulk version of what you can also do one item at a time from the update form.)
+When someone changes roles or leaves, their open items shouldn't stay stuck to them. Under **Reassign work**, pick the person to move work **From**, the person to move it **To**, and click Reassign. It shows how many open issues and projects that person is an assignee on and moves them all at once — the "From" person is swapped for the "To" person in each item's assignee set (co-assignees are left in place). The action is audit-logged. (This is the bulk version of what you can also do one item at a time from the update form.)
 
 ---
 

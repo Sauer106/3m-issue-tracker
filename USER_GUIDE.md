@@ -103,7 +103,7 @@ At the top of the list:
 
 - **Status** — pick which statuses to show. By default you see everything that isn't closed.
 - **Search** — type to match the title or description.
-- **Mine only** — show just the issues assigned to you.
+- **Mine only** — show just the issues where you're one of the assignees.
 - **Needs update** — show only the Open / In Progress issues with no update since the last Thursday 2:00 PM deadline (the same ones the reminder email chases).
 
 ### Creating an issue
@@ -113,7 +113,7 @@ Click **➕ New Issue** at the top right of the Issues page. A window opens wher
 - **Title** and **Description** (both required).
 - **Regions and Facilities** (see that section below).
 - **Have all regions been checked for this issue?** — a required **Yes / No / N/A**. If you pick **No** or **N/A**, briefly explain why. This makes sure region coverage is considered up front.
-- **Assign to** — leave unassigned or pick a person.
+- **Assignee(s)** — assign one or more people (leave empty for unassigned). Everyone assigned sees it under Mine only and gets the assignment and reminder emails.
 - **Solventum Ticket #** and **ServiceDesk Ticket #** — optional, add them if the issue relates to a vendor or help-desk ticket.
 - **Major issue** — check this if it's a significant, widespread issue. Checking it opens a short **leadership brief** right here (see [Major issues](#major-issues)): an **Impact** (required) and the **Current action**. The affected regions come from your Regions/Facilities selection.
 - **Due date** — optional target date. Once it passes on an open issue, the card shows a red Overdue badge.
@@ -125,7 +125,7 @@ Submit and the issue appears in the list. If you assign it to someone, they get 
 Click **Open** on any card. The detail view shows the full description, the badges, and the history. To make a change, use the **Add an update** form:
 
 - Type a **comment** about what's happening. Mention a teammate with **@username** and they'll get an email pointing them to the issue.
-- Change the **status** or the **assignee** (reassigning emails the new person).
+- Change the **status** or the **assignee(s)** (newly-added people are emailed).
 - Update the **Solventum** or **ServiceDesk** ticket numbers.
 - Toggle the **Major** flag or set a **due date**.
 
@@ -215,7 +215,7 @@ On the Projects list, each project card shows its **next open milestone** as a c
 The **Calendar** card is a month view of scheduled **events** — things like go-lives and deadlines, optionally tied to one or more projects.
 
 - Move between months with **◀ Prev** / **Next ▶**, or jump back with **Today**. Today's date is outlined.
-- Each event shows as a small colored bar on its day: **green** Go-Live, **red** Deadline, **orange** Projected Go-Live, **blue** Testing Event. Click a bar to open the event. Below the grid, an **Agenda** lists the month's events with an **Open** button on each.
+- Each event shows as a small colored bar on its day: **green** Go-Live, **red** Deadline, **orange** Projected Go-Live, **blue** Testing Event, **purple** Update. Click a bar to open the event. Below the grid, an **Agenda** lists the month's events with an **Open** button on each.
 - **➕ New Event** creates one: a title, a date, a category, and a **required resource** — one or more people from the user list. Optionally set a **start and end time** (12-hour). For a **multi-day** event, set an end date and choose which **days of the week** it runs, so a weekday-only window skips weekends on the grid. You can also add a description and link projects.
 - Events show their **resource(s)** as 👤 chips on the agenda, the dashboard, and the event view.
 - Opening an event shows its details and a button to **open each linked project**. From a project, the **📅 Calendar** section lists its linked events with a button to open each — so you can hop between an event and its projects in either direction.
@@ -312,7 +312,7 @@ The Friday project digest also flags any **overdue milestones** and the **upcomi
 
 **Notifications (sent right away):**
 
-- **Assignment** — when an issue or project is assigned to you, you get an email with a link to it.
+- **Assignment** — when an issue or project is assigned to you (one of possibly several assignees), you get an email with a link to it.
 - **Mention** — when someone writes **@yourusername** in a comment, you get an email with the comment and a link.
 - **Overdue milestone** — if a project assigned to you has a milestone slip past its date, you get an email (once per milestone) with a link to the project.
 
