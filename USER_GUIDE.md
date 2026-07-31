@@ -194,7 +194,7 @@ What's different from issues:
 
 Everything else is the same: assignee, Solventum and ServiceDesk tickets, regions and facilities, attachments, the update form, and the history timeline all behave just like issues.
 
-**Teams and vendors.** Open a project to find **👥 Internal Teams** and **🏢 Vendors** sections. Add a team (from the admin-managed list) with the analyst(s) on it, and add vendors with their **role, contact, and status**. Add/edit/delete are recorded in the project history. Administrators curate the team and vendor lists on the Admin page.
+**Teams and vendors.** Open a project to find the collapsible **👥 Internal Teams** and **🏢 Vendors** sections. Each team or vendor is added **once** (the picker only offers ones not already on the project), then you add its **people inside it** — click a team or vendor to open it and add **analysts** (for teams) or **contacts** (for vendors) with their **name, email, and phone**. A vendor also carries a **role and status**. Add/remove is recorded in the project history. Administrators curate the master team and vendor lists on the Admin page.
 
 ---
 
