@@ -172,17 +172,34 @@ def _execute_count(sql, params):
 
 
 def reassign_issues(from_user_id, to_user_id, open_only=True):
-    sql = "UPDATE Issues SET AssignedTo = ?, UpdatedAt = SYSDATETIME() WHERE AssignedTo = ?"
-    if open_only:
-        sql += " AND Status IN ('Open', 'In Progress', 'Waiting on Solventum', 'Hold')"
-    return _execute_count(sql, (to_user_id, from_user_id))
+    """Swap one assignee for another across open issues; returns items affected."""
+    sc = " AND i.Status IN ('Open', 'In Progress', 'Waiting on Solventum', 'Hold')" if open_only else ""
+    n = query(f"""SELECT COUNT(*) AS N FROM IssueAssignees ia JOIN Issues i ON i.Id = ia.IssueId
+                  WHERE ia.UserId = ?{sc}""", (from_user_id,))[0]["N"]
+    execute(f"""INSERT INTO IssueAssignees (IssueId, UserId)
+                SELECT ia.IssueId, ? FROM IssueAssignees ia JOIN Issues i ON i.Id = ia.IssueId
+                WHERE ia.UserId = ?{sc}
+                  AND NOT EXISTS (SELECT 1 FROM IssueAssignees x
+                                  WHERE x.IssueId = ia.IssueId AND x.UserId = ?)""",
+            (to_user_id, from_user_id, to_user_id))
+    execute(f"""DELETE ia FROM IssueAssignees ia JOIN Issues i ON i.Id = ia.IssueId
+                WHERE ia.UserId = ?{sc}""", (from_user_id,))
+    return n
 
 
 def reassign_projects(from_user_id, to_user_id, open_only=True):
-    sql = "UPDATE Projects SET AssignedTo = ?, UpdatedAt = SYSDATETIME() WHERE AssignedTo = ?"
-    if open_only:
-        sql += " AND Status IN ('Planned', 'In Progress', 'On Hold')"
-    return _execute_count(sql, (to_user_id, from_user_id))
+    sc = " AND p.Status IN ('Planned', 'In Progress', 'On Hold')" if open_only else ""
+    n = query(f"""SELECT COUNT(*) AS N FROM ProjectAssignees pa JOIN Projects p ON p.Id = pa.ProjectId
+                  WHERE pa.UserId = ?{sc}""", (from_user_id,))[0]["N"]
+    execute(f"""INSERT INTO ProjectAssignees (ProjectId, UserId)
+                SELECT pa.ProjectId, ? FROM ProjectAssignees pa JOIN Projects p ON p.Id = pa.ProjectId
+                WHERE pa.UserId = ?{sc}
+                  AND NOT EXISTS (SELECT 1 FROM ProjectAssignees x
+                                  WHERE x.ProjectId = pa.ProjectId AND x.UserId = ?)""",
+            (to_user_id, from_user_id, to_user_id))
+    execute(f"""DELETE pa FROM ProjectAssignees pa JOIN Projects p ON p.Id = pa.ProjectId
+                WHERE pa.UserId = ?{sc}""", (from_user_id,))
+    return n
 
 
 def set_user_active(user_id, is_active):
@@ -192,11 +209,14 @@ def set_user_active(user_id, is_active):
 # ---------------------------------------------------------------- issues
 
 ISSUE_SELECT = """
-SELECT i.*, r.DisplayName AS ReportedByName, a.DisplayName AS AssignedToName,
+SELECT i.*, r.DisplayName AS ReportedByName,
+       (SELECT STRING_AGG(au.DisplayName, ', ') FROM IssueAssignees ia
+        JOIN Users au ON au.Id = ia.UserId WHERE ia.IssueId = i.Id) AS AssignedToName,
+       (SELECT STRING_AGG(CONVERT(varchar(10), ia.UserId), ',') FROM IssueAssignees ia
+        WHERE ia.IssueId = i.Id) AS AssigneeIds,
        (SELECT MAX(u.CreatedAt) FROM IssueUpdates u WHERE u.IssueId = i.Id) AS LastUpdateAt
 FROM Issues i
 JOIN Users r ON r.Id = i.ReportedBy
-LEFT JOIN Users a ON a.Id = i.AssignedTo
 """
 
 
@@ -223,19 +243,36 @@ def get_issue(issue_id):
     return rows[0] if rows else None
 
 
-def create_issue(title, description, reported_by, assigned_to=None,
+def create_issue(title, description, reported_by, assignee_ids=None,
                  solventum_ticket=None, servicedesk_ticket=None, regions=None, facilities=None,
                  is_major=False, due_date=None, regions_checked=None, regions_checked_reason=None,
                  impact=None, current_action=None):
-    return insert_returning_id(
-        """INSERT INTO Issues (Title, Description, ReportedBy, AssignedTo, SolventumTicket,
+    issue_id = insert_returning_id(
+        """INSERT INTO Issues (Title, Description, ReportedBy, SolventumTicket,
                                ServiceDeskTicket, Regions, Facilities, IsMajor, DueDate,
                                RegionsChecked, RegionsCheckedReason, Impact, CurrentAction)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (title, description, reported_by, assigned_to, solventum_ticket, servicedesk_ticket,
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (title, description, reported_by, solventum_ticket, servicedesk_ticket,
          regions, facilities, 1 if is_major else 0, due_date, regions_checked,
          regions_checked_reason, impact, current_action),
     )
+    set_issue_assignees(issue_id, assignee_ids or [])
+    return issue_id
+
+
+def list_issue_assignees(issue_id):
+    return query(
+        """SELECT u.Id, u.DisplayName FROM IssueAssignees ia JOIN Users u ON u.Id = ia.UserId
+           WHERE ia.IssueId = ? ORDER BY u.DisplayName""", (issue_id,))
+
+
+def set_issue_assignees(issue_id, user_ids):
+    """Replace the assignee set and keep the dormant primary AssignedTo column in sync."""
+    ids = list(dict.fromkeys(user_ids))
+    execute("DELETE FROM IssueAssignees WHERE IssueId = ?", (issue_id,))
+    for uid in ids:
+        execute("INSERT INTO IssueAssignees (IssueId, UserId) VALUES (?, ?)", (issue_id, uid))
+    execute("UPDATE Issues SET AssignedTo = ? WHERE Id = ?", (ids[0] if ids else None, issue_id))
 
 
 def add_update(issue_id, author_id, comment, status_change=None, field_changes=None,
@@ -254,7 +291,7 @@ def set_proposal_status(update_id, status):
     execute("UPDATE IssueUpdates SET ProposalStatus = ? WHERE Id = ?", (status, update_id))
 
 
-def set_issue_fields(issue_id, status=None, assigned_to="__unchanged__",
+def set_issue_fields(issue_id, status=None,
                      solventum_ticket="__unchanged__", servicedesk_ticket="__unchanged__",
                      regions="__unchanged__", facilities="__unchanged__", is_major="__unchanged__",
                      due_date="__unchanged__", regions_checked="__unchanged__",
@@ -274,9 +311,6 @@ def set_issue_fields(issue_id, status=None, assigned_to="__unchanged__",
             sets.append("ResolvedAt = COALESCE(ResolvedAt, SYSDATETIME())")
         else:
             sets.append("ResolvedAt = NULL")
-    if assigned_to != "__unchanged__":
-        sets.append("AssignedTo = ?")
-        params.append(assigned_to)
     if solventum_ticket != "__unchanged__":
         sets.append("SolventumTicket = ?")
         params.append(solventum_ticket)
@@ -338,6 +372,7 @@ def purge_issue(issue_id):
     """Permanent hard delete from the recycle bin, including updates and attachments."""
     execute("DELETE FROM Attachments WHERE ParentType = 'issue' AND ParentId = ?", (issue_id,))
     execute("DELETE FROM IssueUpdates WHERE IssueId = ?", (issue_id,))
+    execute("DELETE FROM IssueAssignees WHERE IssueId = ?", (issue_id,))
     execute("DELETE FROM Issues WHERE Id = ?", (issue_id,))
 
 
@@ -353,11 +388,14 @@ def list_updates(issue_id):
 # ---------------------------------------------------------------- projects
 
 PROJECT_SELECT = """
-SELECT p.*, c.DisplayName AS CreatedByName, a.DisplayName AS AssignedToName,
+SELECT p.*, c.DisplayName AS CreatedByName,
+       (SELECT STRING_AGG(au.DisplayName, ', ') FROM ProjectAssignees pa
+        JOIN Users au ON au.Id = pa.UserId WHERE pa.ProjectId = p.Id) AS AssignedToName,
+       (SELECT STRING_AGG(CONVERT(varchar(10), pa.UserId), ',') FROM ProjectAssignees pa
+        WHERE pa.ProjectId = p.Id) AS AssigneeIds,
        (SELECT MAX(u.CreatedAt) FROM ProjectUpdates u WHERE u.ProjectId = p.Id) AS LastUpdateAt
 FROM Projects p
 JOIN Users c ON c.Id = p.CreatedBy
-LEFT JOIN Users a ON a.Id = p.AssignedTo
 """
 
 
@@ -384,27 +422,40 @@ def get_project(project_id):
     return rows[0] if rows else None
 
 
-def create_project(title, summary, created_by, assigned_to=None,
+def create_project(title, summary, created_by, assignee_ids=None,
                    solventum_ticket=None, servicedesk_ticket=None, regions=None, facilities=None):
-    return insert_returning_id(
-        """INSERT INTO Projects (Title, Summary, CreatedBy, AssignedTo, SolventumTicket,
+    project_id = insert_returning_id(
+        """INSERT INTO Projects (Title, Summary, CreatedBy, SolventumTicket,
                                  ServiceDeskTicket, Regions, Facilities)
-           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (title, summary, created_by, assigned_to, solventum_ticket, servicedesk_ticket,
-         regions, facilities),
+           OUTPUT INSERTED.Id VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (title, summary, created_by, solventum_ticket, servicedesk_ticket, regions, facilities),
     )
+    set_project_assignees(project_id, assignee_ids or [])
+    return project_id
 
 
-def set_project_fields(project_id, status=None, assigned_to="__unchanged__",
+def list_project_assignees(project_id):
+    return query(
+        """SELECT u.Id, u.DisplayName FROM ProjectAssignees pa JOIN Users u ON u.Id = pa.UserId
+           WHERE pa.ProjectId = ? ORDER BY u.DisplayName""", (project_id,))
+
+
+def set_project_assignees(project_id, user_ids):
+    """Replace the assignee set and keep the dormant primary AssignedTo column in sync."""
+    ids = list(dict.fromkeys(user_ids))
+    execute("DELETE FROM ProjectAssignees WHERE ProjectId = ?", (project_id,))
+    for uid in ids:
+        execute("INSERT INTO ProjectAssignees (ProjectId, UserId) VALUES (?, ?)", (project_id, uid))
+    execute("UPDATE Projects SET AssignedTo = ? WHERE Id = ?", (ids[0] if ids else None, project_id))
+
+
+def set_project_fields(project_id, status=None,
                        solventum_ticket="__unchanged__", servicedesk_ticket="__unchanged__",
                        regions="__unchanged__", facilities="__unchanged__"):
     sets, params = ["UpdatedAt = SYSDATETIME()"], []
     if status is not None:
         sets.append("Status = ?")
         params.append(status)
-    if assigned_to != "__unchanged__":
-        sets.append("AssignedTo = ?")
-        params.append(assigned_to)
     if solventum_ticket != "__unchanged__":
         sets.append("SolventumTicket = ?")
         params.append(solventum_ticket)
@@ -452,6 +503,7 @@ def purge_project(project_id):
     execute("DELETE FROM ProjectMilestones WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM ProjectTeams WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM ProjectVendors WHERE ProjectId = ?", (project_id,))
+    execute("DELETE FROM ProjectAssignees WHERE ProjectId = ?", (project_id,))
     execute("DELETE FROM Projects WHERE Id = ?", (project_id,))
 
 
@@ -499,11 +551,13 @@ def list_overdue_milestones():
     """Open, past-due milestones on live projects (not deleted/Completed/Cancelled)."""
     return query(
         """SELECT m.Id, m.Name, m.DueDate, m.ProjectId, p.Title AS ProjectTitle,
-                  p.Status AS ProjectStatus, p.AssignedTo AS AssignedTo,
-                  a.DisplayName AS AssignedToName
+                  p.Status AS ProjectStatus,
+                  (SELECT STRING_AGG(CONVERT(varchar(10), pa.UserId), ',') FROM ProjectAssignees pa
+                   WHERE pa.ProjectId = p.Id) AS AssigneeIds,
+                  (SELECT STRING_AGG(au.DisplayName, ', ') FROM ProjectAssignees pa
+                   JOIN Users au ON au.Id = pa.UserId WHERE pa.ProjectId = p.Id) AS AssignedToName
            FROM ProjectMilestones m
            JOIN Projects p ON p.Id = m.ProjectId
-           LEFT JOIN Users a ON a.Id = p.AssignedTo
            WHERE m.Done = 0 AND m.DueDate IS NOT NULL
                  AND m.DueDate < CAST(SYSDATETIME() AS DATE)
                  AND p.DeletedAt IS NULL

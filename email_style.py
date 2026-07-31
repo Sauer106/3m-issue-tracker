@@ -101,7 +101,7 @@ def item_table(items, updates, cutoff=None, flag_stale=False):
             f'<td style="{td}border-left:3px solid {accent};color:{MUTED};white-space:nowrap;">#{i["Id"]}</td>'
             f'<td style="{td}font-weight:bold;">{escape(i["Title"])}</td>'
             f'<td style="{td}white-space:nowrap;">{status_pill(i["Status"])}</td>'
-            f'<td style="{td}white-space:nowrap;">{assignee}</td>'
+            f'<td style="{td}">{assignee}</td>'
             f'<td style="{td}color:{MUTED};">{last}</td>'
             f'</tr>'
         )

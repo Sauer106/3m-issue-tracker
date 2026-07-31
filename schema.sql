@@ -491,6 +491,42 @@ IF COL_LENGTH('dbo.CalendarEvents', 'Weekdays') IS NULL
     ALTER TABLE dbo.CalendarEvents ADD Weekdays NVARCHAR(50) NULL;
 GO
 
+-- Multiple assignees per issue/project (the single AssignedTo column is kept in
+-- sync with the primary/first assignee for backward compatibility).
+IF OBJECT_ID('dbo.IssueAssignees') IS NULL
+BEGIN
+    CREATE TABLE dbo.IssueAssignees (
+        IssueId INT NOT NULL REFERENCES dbo.Issues(Id),
+        UserId  INT NOT NULL REFERENCES dbo.Users(Id),
+        CONSTRAINT PK_IssueAssignees PRIMARY KEY (IssueId, UserId)
+    );
+    CREATE INDEX IX_IssueAssignees_User ON dbo.IssueAssignees(UserId);
+END
+GO
+IF OBJECT_ID('dbo.ProjectAssignees') IS NULL
+BEGIN
+    CREATE TABLE dbo.ProjectAssignees (
+        ProjectId INT NOT NULL REFERENCES dbo.Projects(Id),
+        UserId    INT NOT NULL REFERENCES dbo.Users(Id),
+        CONSTRAINT PK_ProjectAssignees PRIMARY KEY (ProjectId, UserId)
+    );
+    CREATE INDEX IX_ProjectAssignees_User ON dbo.ProjectAssignees(UserId);
+END
+GO
+-- Back-fill existing single assignees into the link tables (idempotent).
+INSERT INTO dbo.IssueAssignees (IssueId, UserId)
+SELECT i.Id, i.AssignedTo FROM dbo.Issues i
+WHERE i.AssignedTo IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM dbo.IssueAssignees ia
+                  WHERE ia.IssueId = i.Id AND ia.UserId = i.AssignedTo);
+GO
+INSERT INTO dbo.ProjectAssignees (ProjectId, UserId)
+SELECT p.Id, p.AssignedTo FROM dbo.Projects p
+WHERE p.AssignedTo IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM dbo.ProjectAssignees pa
+                  WHERE pa.ProjectId = p.Id AND pa.UserId = p.AssignedTo);
+GO
+
 -- The app and email scripts run as SYSTEM via Task Scheduler; grant it access.
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'NT AUTHORITY\SYSTEM')
     CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
@@ -512,12 +548,21 @@ CREATE OR ALTER VIEW dbo.vw_IssuesFlat AS
 SELECT i.Id, i.Title, i.Status, i.IsMajor, i.DueDate,
        i.SolventumTicket, i.ServiceDeskTicket,
        i.RegionsChecked, i.FixAppliedAllRegions, i.FixAllRegionsBy,
-       r.DisplayName AS ReportedBy, a.DisplayName AS AssignedTo,
+       r.DisplayName AS ReportedBy,
+       (SELECT STRING_AGG(u.DisplayName, ', ') FROM IssueAssignees ia
+        JOIN Users u ON u.Id = ia.UserId WHERE ia.IssueId = i.Id) AS AssignedTo,
        i.CreatedAt, i.UpdatedAt, i.ResolvedAt,
        (SELECT MAX(u.CreatedAt) FROM IssueUpdates u WHERE u.IssueId = i.Id) AS LastUpdateAt
 FROM Issues i
 JOIN Users r ON r.Id = i.ReportedBy
-LEFT JOIN Users a ON a.Id = i.AssignedTo
+WHERE i.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_IssuesByAssignee AS
+SELECT i.Id AS IssueId, i.Status, i.IsMajor, i.DueDate, u.DisplayName AS Assignee
+FROM Issues i
+JOIN IssueAssignees ia ON ia.IssueId = i.Id
+JOIN Users u ON u.Id = ia.UserId
 WHERE i.DeletedAt IS NULL;
 GO
 
@@ -537,11 +582,20 @@ GO
 
 CREATE OR ALTER VIEW dbo.vw_ProjectsFlat AS
 SELECT p.Id, p.Title, p.Status, p.SolventumTicket, p.ServiceDeskTicket,
-       c.DisplayName AS CreatedBy, a.DisplayName AS AssignedTo,
+       c.DisplayName AS CreatedBy,
+       (SELECT STRING_AGG(u.DisplayName, ', ') FROM ProjectAssignees pa
+        JOIN Users u ON u.Id = pa.UserId WHERE pa.ProjectId = p.Id) AS AssignedTo,
        p.TargetDate, p.CreatedAt, p.UpdatedAt
 FROM Projects p
 JOIN Users c ON c.Id = p.CreatedBy
-LEFT JOIN Users a ON a.Id = p.AssignedTo
+WHERE p.DeletedAt IS NULL;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_ProjectsByAssignee AS
+SELECT p.Id AS ProjectId, p.Status, u.DisplayName AS Assignee
+FROM Projects p
+JOIN ProjectAssignees pa ON pa.ProjectId = p.Id
+JOIN Users u ON u.Id = pa.UserId
 WHERE p.DeletedAt IS NULL;
 GO
 

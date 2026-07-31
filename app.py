@@ -37,6 +37,11 @@ PROJECT_STATUSES = ["Planned", "In Progress", "On Hold", "Completed", "Cancelled
 LEADERSHIP = ["Matt Obenrader", "Carly Auriemma", "Giovanna Ferro", "Lauren Hartman"]
 LEADERSHIP_STR = ", ".join(LEADERSHIP)
 
+
+def _is_mine(row, uid):
+    """True if the user is one of the row's assignees (uses the aggregated AssigneeIds)."""
+    return str(uid) in (row.get("AssigneeIds") or "").split(",")
+
 # Managed from the Admin page (Regions/Facilities tables); reloaded every rerun.
 REGIONS = db.get_region_map()
 # Admin-managed master lists for project involvement (reloaded each rerun).
@@ -126,9 +131,9 @@ def due_chip(issue):
 
 
 # Calendar event categories and their colors (also used for the project-target marker).
-EVENT_CATEGORIES = ["Go-Live", "Deadline", "Projected Go-Live", "Testing Event"]
+EVENT_CATEGORIES = ["Go-Live", "Deadline", "Projected Go-Live", "Testing Event", "Update"]
 EVENT_COLORS = {"Go-Live": "#388e3c", "Deadline": "#d32f2f", "Projected Go-Live": "#f57c00",
-                "Testing Event": "#1976d2"}
+                "Testing Event": "#1976d2", "Update": "#7b1fa2"}
 PROJECT_TARGET_COLOR = "#00796b"
 
 
@@ -326,7 +331,7 @@ def scope_chips(record, detailed=False):
     return out
 
 
-def field_edits(record, new_assignee_id, new_assignee_label, new_solventum, new_servicedesk,
+def field_edits(record, new_assignee_labels, new_solventum, new_servicedesk,
                 new_regions=None, new_facilities=None, new_due="__skip__"):
     """Diff the editable fields of an issue/project against the form values."""
     edits = []
@@ -334,9 +339,10 @@ def field_edits(record, new_assignee_id, new_assignee_label, new_solventum, new_
         old_due = record.get("DueDate")
         edits.append({"field": "Due date", "old": f"{old_due}" if old_due else "",
                       "new": f"{new_due}" if new_due else ""})
-    if new_assignee_id != record["AssignedTo"]:
-        edits.append({"field": "Assigned to", "old": record["AssignedToName"] or "",
-                      "new": "" if new_assignee_label == "(Unassigned)" else new_assignee_label})
+    old_assignees = {x for x in (record["AssignedToName"] or "").split(", ") if x}
+    if set(new_assignee_labels) != old_assignees:
+        edits.append({"field": "Assigned to", "old": sorted(old_assignees),
+                      "new": sorted(new_assignee_labels)})
     if (new_solventum.strip() or None) != record["SolventumTicket"]:
         edits.append({"field": "Solventum Ticket", "old": record["SolventumTicket"] or "",
                       "new": new_solventum.strip()})
@@ -655,8 +661,8 @@ def new_issue_dialog(user):
     if regions_checked in ("No", "N/A"):
         rc_reason = st.text_area("Please explain (required)", key="ni_rc_reason",
                                  placeholder="Why haven't all regions been checked, or why is it N/A?")
-    col1, col2, col3 = st.columns(3)
-    assignee = col1.selectbox("Assign to", ["(Unassigned)"] + list(names))
+    assignees = st.multiselect("Assignee(s)", list(names), key="ni_assignees")
+    col2, col3 = st.columns(2)
     solventum = col2.text_input("Solventum Ticket #")
     servicedesk = col3.text_input("ServiceDesk Ticket #")
     m1, m2 = st.columns(2)
@@ -682,8 +688,9 @@ def new_issue_dialog(user):
         elif is_major and not (impact or "").strip():
             st.error("A Major issue needs an Impact for the leadership brief.")
         else:
+            assignee_ids = [names[a] for a in assignees]
             issue_id = db.create_issue(
-                title.strip(), description.strip(), user["Id"], names.get(assignee),
+                title.strip(), description.strip(), user["Id"], assignee_ids,
                 solventum.strip() or None, servicedesk.strip() or None,
                 json.dumps(regions) if regions else None,
                 json.dumps(facilities) if facilities else None,
@@ -692,10 +699,10 @@ def new_issue_dialog(user):
                 impact=(impact or "").strip() or None if is_major else None,
                 current_action=(current_action or "").strip() or None if is_major else None,
             )
-            if names.get(assignee):
-                notify.notify_assignment(db.get_config(), "issue", issue_id, title.strip(),
-                                         db.get_user_by_id(names[assignee]),
-                                         user["DisplayName"], user["Id"])
+            if assignee_ids:
+                notify.notify_assignees(db.get_config(), "issue", issue_id, title.strip(),
+                                        [db.get_user_by_id(i) for i in assignee_ids],
+                                        user["DisplayName"], user["Id"])
             if is_major:
                 st.toast(f"Leadership brief queued for {LEADERSHIP_STR} (email pending setup).")
             st.toast(f"Issue #{issue_id} created.")
@@ -710,8 +717,8 @@ def new_project_dialog(user):
     summary = st.text_area("Summary", height=120,
                            placeholder="What is this project about? Goals, scope, context.")
     regions, facilities = region_facility_picker("np")
-    col1, col2, col3 = st.columns(3)
-    assignee = col1.selectbox("Assign to", ["(Unassigned)"] + list(names))
+    assignees = st.multiselect("Assignee(s)", list(names), key="np_assignees")
+    col2, col3 = st.columns(2)
     solventum = col2.text_input("Solventum Ticket #")
     servicedesk = col3.text_input("ServiceDesk Ticket #")
     st.caption("You can add milestones after creating the project.")
@@ -719,15 +726,16 @@ def new_project_dialog(user):
         if not title.strip() or not summary.strip():
             st.error("Title and summary are required.")
         else:
+            assignee_ids = [names[a] for a in assignees]
             pid = db.create_project(title.strip(), summary.strip(), user["Id"],
-                                    names.get(assignee), solventum.strip() or None,
+                                    assignee_ids, solventum.strip() or None,
                                     servicedesk.strip() or None,
                                     json.dumps(regions) if regions else None,
                                     json.dumps(facilities) if facilities else None)
-            if names.get(assignee):
-                notify.notify_assignment(db.get_config(), "project", pid, title.strip(),
-                                         db.get_user_by_id(names[assignee]),
-                                         user["DisplayName"], user["Id"])
+            if assignee_ids:
+                notify.notify_assignees(db.get_config(), "project", pid, title.strip(),
+                                        [db.get_user_by_id(i) for i in assignee_ids],
+                                        user["DisplayName"], user["Id"])
             st.toast(f"Project #{pid} created.")
             st.rerun()
 
@@ -767,7 +775,6 @@ def close_region_dialog(user):
             edits = p["edits"] + [{"field": "Fix applied across all regions",
                                    "old": "", "new": new_val}]
             db.set_issue_fields(p["issue_id"], status=p["new_status"],
-                                assigned_to=p["assignee_id"],
                                 solventum_ticket=p["solventum"],
                                 servicedesk_ticket=p["servicedesk"],
                                 regions=json.dumps(p["regions"]) if p["regions"] else None,
@@ -776,6 +783,7 @@ def close_region_dialog(user):
                                 fix_applied_all_regions=applies,
                                 fix_not_applied_reason=reason.strip() if applies == "No" else None,
                                 fix_all_regions_by=fix_by if applies == "Will be" else None)
+            db.set_issue_assignees(p["issue_id"], p["assignee_ids"])
             db.add_update(p["issue_id"], user["Id"], comment, p["status_change"],
                           json.dumps(edits) if edits else None)
             del st.session_state["pending_close"]
@@ -853,12 +861,11 @@ def page_issues(user, config):
                         db.add_update(i["Id"], user["Id"], "", f"{i['Status']} -> {new_s}")
                 else:
                     aid = None if target == "(Unassigned)" else bulk_users[target]
-                    if aid != i["AssignedTo"]:
-                        db.set_issue_fields(i["Id"], assigned_to=aid)
-                        db.add_update(i["Id"], user["Id"], "", None,
-                                      json.dumps([{"field": "Assigned to",
-                                                   "old": i["AssignedToName"] or "",
-                                                   "new": "" if target == "(Unassigned)" else target}]))
+                    db.set_issue_assignees(i["Id"], [aid] if aid else [])
+                    db.add_update(i["Id"], user["Id"], "", None,
+                                  json.dumps([{"field": "Assigned to",
+                                               "old": i["AssignedToName"] or "",
+                                               "new": "" if target == "(Unassigned)" else target}]))
             db.audit(user["Id"], "bulk_action", f"{action} on {len(chosen)} issue(s)")
             st.success(f"Applied '{action}' to {len(chosen)} issue(s).")
             del st.session_state["bulk_pick"]
@@ -868,7 +875,7 @@ def page_issues(user, config):
     def issue_cards():
         issues = db.list_issues(statuses=status_filter or None)
         if mine_only:
-            issues = [i for i in issues if i["AssignedTo"] == user["Id"]]
+            issues = [i for i in issues if _is_mine(i, user["Id"])]
         if needs_update:
             issues = [i for i in issues
                       if i["Status"] in ("Open", "In Progress")
@@ -1031,8 +1038,11 @@ def issue_detail(issue_id, user):
 
     users = db.list_users(active_only=True)
     names = {u["DisplayName"]: u["Id"] for u in users}
-    assignee_options = ["(Unassigned)"] + list(names)
-    current_assignee = issue["AssignedToName"] or "(Unassigned)"
+    assignee_map = dict(names)   # include any current (possibly inactive) assignees as options
+    for a in db.list_issue_assignees(issue_id):
+        assignee_map.setdefault(a["DisplayName"], a["Id"])
+    current_assignees = [a["DisplayName"] for a in db.list_issue_assignees(issue_id)]
+    old_assignee_ids = [assignee_map[n] for n in current_assignees]
 
     with st.container(border=True):
         st.markdown("**Regions & Facilities**")
@@ -1048,8 +1058,7 @@ def issue_detail(issue_id, user):
                                placeholder="What's the latest on this issue?")
         col1, col2 = st.columns(2)
         new_status = col1.selectbox("Status", STATUSES, index=STATUSES.index(issue["Status"]))
-        new_assignee = col2.selectbox("Assign to", assignee_options,
-                                      index=assignee_options.index(current_assignee))
+        new_assignees = col2.multiselect("Assignee(s)", list(assignee_map), default=current_assignees)
         col3, col4 = st.columns(2)
         new_solventum = col3.text_input("Solventum Ticket #", value=issue["SolventumTicket"] or "")
         new_servicedesk = col4.text_input("ServiceDesk Ticket #", value=issue["ServiceDeskTicket"] or "")
@@ -1057,10 +1066,11 @@ def issue_detail(issue_id, user):
         new_major = mj.checkbox("🚩 Major issue", value=bool(issue["IsMajor"]))
         new_due = dd.date_input("Due date", value=issue["DueDate"])
         if st.form_submit_button("Save Update", type="primary"):
+            new_ids = [assignee_map[a] for a in new_assignees]
             status_change = None
             if new_status != issue["Status"]:
                 status_change = f"{issue['Status']} -> {new_status}"
-            edits = field_edits(issue, names.get(new_assignee), new_assignee,
+            edits = field_edits(issue, new_assignees,
                                 new_solventum, new_servicedesk, new_regions, new_facilities,
                                 new_due=new_due)
             if new_major != bool(issue["IsMajor"]):
@@ -1075,7 +1085,7 @@ def issue_detail(issue_id, user):
                 st.session_state.pending_close = {
                     "issue_id": issue_id, "new_status": new_status,
                     "status_change": status_change, "comment": comment.strip(),
-                    "assignee_id": names.get(new_assignee),
+                    "assignee_ids": new_ids,
                     "solventum": new_solventum.strip() or None,
                     "servicedesk": new_servicedesk.strip() or None,
                     "regions": new_regions, "facilities": new_facilities,
@@ -1084,18 +1094,19 @@ def issue_detail(issue_id, user):
                 close_region_dialog(user)
             else:
                 db.set_issue_fields(issue_id, status=new_status,
-                                    assigned_to=names.get(new_assignee),
                                     solventum_ticket=new_solventum.strip() or None,
                                     servicedesk_ticket=new_servicedesk.strip() or None,
                                     regions=json.dumps(new_regions) if new_regions else None,
                                     facilities=json.dumps(new_facilities) if new_facilities else None,
                                     is_major=new_major, due_date=new_due)
+                db.set_issue_assignees(issue_id, new_ids)
                 db.add_update(issue_id, user["Id"], comment.strip(), status_change,
                               json.dumps(edits) if edits else None)
-                new_aid = names.get(new_assignee)
-                if new_aid and new_aid != issue["AssignedTo"]:
-                    notify.notify_assignment(db.get_config(), "issue", issue_id, issue["Title"],
-                                             db.get_user_by_id(new_aid), user["DisplayName"], user["Id"])
+                added = [i for i in new_ids if i not in old_assignee_ids]
+                if added:
+                    notify.notify_assignees(db.get_config(), "issue", issue_id, issue["Title"],
+                                            [db.get_user_by_id(i) for i in added],
+                                            user["DisplayName"], user["Id"])
                 if comment.strip():
                     notify.notify_mentions(db.get_config(), "issue", issue_id, issue["Title"],
                                            comment.strip(), user["DisplayName"], user["Id"])
@@ -1128,7 +1139,7 @@ def issue_detail(issue_id, user):
             db.audit(user["Id"], "delete_update", f"issue #{issue_id} update {uid}")
         render_history(db.list_updates(issue_id), on_delete=_del_update,
                        can_delete=lambda u: user["IsAdmin"] or u["AuthorId"] == user["Id"],
-                       proposal_allowed=user["IsAdmin"] or issue["AssignedTo"] == user["Id"],
+                       proposal_allowed=user["IsAdmin"] or _is_mine(issue, user["Id"]),
                        on_proposal=decide_proposal)
 
     live_history()
@@ -1159,7 +1170,7 @@ def page_projects(user, config):
     def project_cards():
         projects = db.list_projects(statuses=status_filter or None)
         if mine_only:
-            projects = [p for p in projects if p["AssignedTo"] == user["Id"]]
+            projects = [p for p in projects if _is_mine(p, user["Id"])]
         if search:
             s = search.lower()
             projects = [p for p in projects if s in p["Title"].lower() or s in p["Summary"].lower()]
@@ -1438,8 +1449,11 @@ def project_detail(project_id, user):
 
     users = db.list_users(active_only=True)
     names = {u["DisplayName"]: u["Id"] for u in users}
-    assignee_options = ["(Unassigned)"] + list(names)
-    current_assignee = proj["AssignedToName"] or "(Unassigned)"
+    assignee_map = dict(names)
+    for a in db.list_project_assignees(project_id):
+        assignee_map.setdefault(a["DisplayName"], a["Id"])
+    current_assignees = [a["DisplayName"] for a in db.list_project_assignees(project_id)]
+    old_assignee_ids = [assignee_map[n] for n in current_assignees]
 
     with st.container(border=True):
         st.markdown("**Regions & Facilities**")
@@ -1456,32 +1470,33 @@ def project_detail(project_id, user):
         col1, col2 = st.columns(2)
         new_status = col1.selectbox("Status", PROJECT_STATUSES,
                                     index=PROJECT_STATUSES.index(proj["Status"]))
-        new_assignee = col2.selectbox("Assign to", assignee_options,
-                                      index=assignee_options.index(current_assignee))
+        new_assignees = col2.multiselect("Assignee(s)", list(assignee_map), default=current_assignees)
         col3, col4 = st.columns(2)
         new_solventum = col3.text_input("Solventum Ticket #", value=proj["SolventumTicket"] or "")
         new_servicedesk = col4.text_input("ServiceDesk Ticket #", value=proj["ServiceDeskTicket"] or "")
         if st.form_submit_button("Save Update", type="primary"):
+            new_ids = [assignee_map[a] for a in new_assignees]
             status_change = None
             if new_status != proj["Status"]:
                 status_change = f"{proj['Status']} -> {new_status}"
-            edits = field_edits(proj, names.get(new_assignee), new_assignee,
+            edits = field_edits(proj, new_assignees,
                                 new_solventum, new_servicedesk, new_regions, new_facilities)
             if not comment.strip() and not status_change and not edits:
                 st.error("Enter an update, or change the status/details.")
             else:
                 db.set_project_fields(project_id, status=new_status,
-                                      assigned_to=names.get(new_assignee),
                                       solventum_ticket=new_solventum.strip() or None,
                                       servicedesk_ticket=new_servicedesk.strip() or None,
                                       regions=json.dumps(new_regions) if new_regions else None,
                                       facilities=json.dumps(new_facilities) if new_facilities else None)
+                db.set_project_assignees(project_id, new_ids)
                 db.add_project_update(project_id, user["Id"], comment.strip(), status_change,
                                       json.dumps(edits) if edits else None)
-                new_aid = names.get(new_assignee)
-                if new_aid and new_aid != proj["AssignedTo"]:
-                    notify.notify_assignment(db.get_config(), "project", project_id, proj["Title"],
-                                             db.get_user_by_id(new_aid), user["DisplayName"], user["Id"])
+                added = [i for i in new_ids if i not in old_assignee_ids]
+                if added:
+                    notify.notify_assignees(db.get_config(), "project", project_id, proj["Title"],
+                                            [db.get_user_by_id(i) for i in added],
+                                            user["DisplayName"], user["Id"])
                 if comment.strip():
                     notify.notify_mentions(db.get_config(), "project", project_id, proj["Title"],
                                            comment.strip(), user["DisplayName"], user["Id"])
@@ -1534,11 +1549,13 @@ _CAL_CSS = """
 [class*="st-key-calbtndl_"] button { border-left:3px solid #d32f2f; }
 [class*="st-key-calbtnpgl_"] button { border-left:3px solid #f57c00; }
 [class*="st-key-calbtnte_"] button { border-left:3px solid #1976d2; }
+[class*="st-key-calbtnup_"] button { border-left:3px solid #7b1fa2; }
 </style>
 """
 
 # Short, class-safe codes for the per-category button border colors above.
-CAT_CODE = {"Go-Live": "gl", "Deadline": "dl", "Projected Go-Live": "pgl", "Testing Event": "te"}
+CAT_CODE = {"Go-Live": "gl", "Deadline": "dl", "Projected Go-Live": "pgl", "Testing Event": "te",
+            "Update": "up"}
 
 # 12-hour time picker options (15-minute slots) and weekday labels for events.
 TIME_SLOTS = [time(h, m) for h in range(24) for m in (0, 15, 30, 45)]
@@ -2000,8 +2017,8 @@ def page_dashboard(user, config):
         st.subheader("Open issues by assignee")
         by_assignee = {}
         for i in open_issues:
-            name = i["AssignedToName"] or "Unassigned"
-            by_assignee[name] = by_assignee.get(name, 0) + 1
+            for nm in (i["AssignedToName"].split(", ") if i["AssignedToName"] else ["Unassigned"]):
+                by_assignee[nm] = by_assignee.get(nm, 0) + 1
         _bar(by_assignee, "Assignee")
 
     st.subheader("Projects by status")
@@ -2170,9 +2187,9 @@ def page_admin(user, config):
     to_label = rc2.selectbox("To", list(umap), key="reassign_to")
     from_id, to_id = umap[from_label], umap[to_label]
     n_issues = len([i for i in db.list_issues(
-        statuses=["Open", "In Progress", "Waiting on Solventum", "Hold"]) if i["AssignedTo"] == from_id])
+        statuses=["Open", "In Progress", "Waiting on Solventum", "Hold"]) if _is_mine(i, from_id)])
     n_projects = len([p for p in db.list_projects(
-        statuses=["Planned", "In Progress", "On Hold"]) if p["AssignedTo"] == from_id])
+        statuses=["Planned", "In Progress", "On Hold"]) if _is_mine(p, from_id)])
     st.caption(f"**{from_label}** has **{n_issues}** open issue(s) and **{n_projects}** "
                f"open project(s) assigned.")
     if st.button("Reassign", type="primary", disabled=(from_id == to_id or n_issues + n_projects == 0)):
@@ -2340,7 +2357,7 @@ def page_admin(user, config):
         st.success(f"Sent to {me}")
     if t3.button("Test reminder to me", use_container_width=True):
         mine = [i for i in db.list_issues(statuses=["Open", "In Progress"])
-                if user["Id"] in (i["AssignedTo"], i["ReportedBy"])]
+                if _is_mine(i, user["Id"]) or i["ReportedBy"] == user["Id"]]
         body = send_reminders.build_body(user["DisplayName"], mine[:10],
                                          reporting.upcoming_deadline(config),
                                          config["app"].get("app_url", ""))

@@ -98,13 +98,18 @@ def send_milestone_reminders(config, app_url):
     users = {u["Id"]: u for u in db.list_users()}
     by_owner = defaultdict(list)
     for m in overdue:
-        owner = users.get(m["AssignedTo"]) if m["AssignedTo"] else None
-        if not (owner and owner["IsActive"] and owner["Email"] and owner["ReceivesReminders"]):
-            print(f"Skipping milestone #{m['Id']}: owner inactive, unassigned, no email, "
-                  "or reminders off.")
+        owner_ids = [int(x) for x in (m["AssigneeIds"] or "").split(",") if x]
+        if not owner_ids:
+            print(f"Skipping milestone #{m['Id']}: project has no assignees.")
             continue
-        if not db.email_already_sent("milestone_overdue", owner["Email"], _EVER, m["Id"]):
-            by_owner[m["AssignedTo"]].append(m)
+        for owner_id in owner_ids:
+            owner = users.get(owner_id)
+            if not (owner and owner["IsActive"] and owner["Email"] and owner["ReceivesReminders"]):
+                print(f"Skipping milestone #{m['Id']} for user {owner_id}: "
+                      "inactive, no email, or reminders off.")
+                continue
+            if not db.email_already_sent("milestone_overdue", owner["Email"], _EVER, m["Id"]):
+                by_owner[owner_id].append(m)
 
     sent = 0
     for owner_id, rows in by_owner.items():
@@ -138,12 +143,16 @@ def main():
     users = {u["Id"]: u for u in db.list_users()}
     by_user = defaultdict(list)
     for issue in issues:
-        owner_id = issue["AssignedTo"] or issue["ReportedBy"]
-        owner = users.get(owner_id)
-        if owner and owner["IsActive"] and owner["Email"] and owner["ReceivesReminders"]:
-            by_user[owner_id].append(issue)
-        else:
-            print(f"Skipping issue #{issue['Id']}: owner inactive, no email, or reminders off.")
+        # Remind every assignee; fall back to the reporter when there are none.
+        owner_ids = [int(x) for x in (issue["AssigneeIds"] or "").split(",") if x] \
+            or [issue["ReportedBy"]]
+        for owner_id in owner_ids:
+            owner = users.get(owner_id)
+            if owner and owner["IsActive"] and owner["Email"] and owner["ReceivesReminders"]:
+                by_user[owner_id].append(issue)
+            else:
+                print(f"Skipping issue #{issue['Id']} for user {owner_id}: "
+                      "inactive, no email, or reminders off.")
 
     sent = 0
     for owner_id, owner_issues in by_user.items():

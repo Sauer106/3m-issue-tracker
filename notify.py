@@ -32,7 +32,7 @@ def _send(config, to_email, subject, subtitle, body_para, link, kind):
 
 
 def notify_assignment(config, kind, item_id, title, assignee, actor_name, actor_id):
-    """Email the assignee that an issue/project was assigned to them."""
+    """Email one assignee that an issue/project was assigned to them."""
     if not assignee or not assignee["IsActive"] or not assignee["Email"]:
         return
     if assignee["Id"] == actor_id:   # don't notify someone who assigned it to themselves
@@ -42,6 +42,12 @@ def notify_assignment(config, kind, item_id, title, assignee, actor_name, actor_
     para = (f"{escape(actor_name)} assigned {kind} <b>#{item_id} — {escape(title)}</b> to you.")
     _send(config, assignee["Email"], subject, f"{kind.title()} assignment", para,
           _link(app_url, kind, item_id), kind)
+
+
+def notify_assignees(config, kind, item_id, title, assignees, actor_name, actor_id):
+    """Email each newly-added assignee (skips the actor / inactive / no-email)."""
+    for a in assignees:
+        notify_assignment(config, kind, item_id, title, a, actor_name, actor_id)
 
 
 def find_mentions(comment, exclude_id=None):
